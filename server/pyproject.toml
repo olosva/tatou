@@ -1,0 +1,17 @@
+[project]
+name = "Tatou-Server"
+version = "0.0.1"
+description = "PDF Watermarking platform"
+requires-python = ">=3.11"
+dependencies = ["PyMuPDF>=1.21.1","Flask==3.0.3","gunicorn==21.2.0"]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0"
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["test/"]
+python_files = ["test_*.py"]
+
