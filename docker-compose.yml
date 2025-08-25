@@ -7,14 +7,16 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5000:5000"
+    volumes:
+      - db-data:/var/lib/mysql
     environment:
       - PYTHONUNBUFFERED=1
       # DB connection details for future use by the API
       - DB_HOST=db
       - DB_PORT=3306
       - DB_NAME=tatou
-      - DB_USER=tatou
-      - DB_PASSWORD=tatou
+      - DB_USER=${MARIADB_USER}
+      - DB_PASSWORD=${MARIADB_PASSWORD}
     depends_on:
       db:
         condition: service_healthy
@@ -24,14 +26,14 @@ services:
     image: mariadb:11.4
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
-      - MARIADB_ROOT_PASSWORD=rootpassword
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
       - MARIADB_DATABASE=tatou
-      - MARIADB_USER=tatou
-      - MARIADB_PASSWORD=tatou
+      - MARIADB_USER=${MARIADB_USER}
+      - MARIADB_PASSWORD=${MARIADB_PASSWORD}
     volumes:
-      - db-data:/var/lib/mysql
+      - user-files:/app/storage
     healthcheck:
-      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root -p$MARIADB_ROOT_PASSWORD --silent"]
+      test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root --password=$MARIADB_ROOT_PASSWORD --silent"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,7 +46,8 @@ services:
     environment:
       - PMA_HOST=db
       - PMA_PORT=3306
-      - UPLOAD_LIMIT=64M
+      - UPLOAD_LIMIT=64M     # <-- use a unit and quote if using YAML key:value form
+      - MEMORY_LIMIT=256M
     ports:
       - "8080:80"
     depends_on:
@@ -54,3 +57,4 @@ services:
 
 volumes:
   db-data:
+  user-files:
