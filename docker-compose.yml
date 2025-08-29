@@ -8,7 +8,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - db-data:/var/lib/mysql
+      - user-files:/app/storage
     environment:
       - PYTHONUNBUFFERED=1
       # DB connection details for future use by the API
@@ -31,7 +31,7 @@ services:
       - MARIADB_USER=${MARIADB_USER}
       - MARIADB_PASSWORD=${MARIADB_PASSWORD}
     volumes:
-      - user-files:/app/storage
+      - db-data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mariadb-admin ping -h 127.0.0.1 -u root --password=$MARIADB_ROOT_PASSWORD --silent"]
       interval: 10s
