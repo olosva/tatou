@@ -118,16 +118,16 @@ def create_app():
     @app.post("/api/login")
     def login():
         payload = request.get_json(silent=True) or {}
-        login = (payload.get("login") or "").strip()
+        email = (payload.get("email") or "").strip()
         password = payload.get("password") or ""
-        if not login or not password:
-            return jsonify({"error": "login and password are required"}), 400
+        if not email or not password:
+            return jsonify({"error": "email and password are required"}), 400
 
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
-                    text("SELECT id, email, login, hpassword FROM Users WHERE login = :login LIMIT 1"),
-                    {"login": login},
+                    text("SELECT id, email, login, hpassword FROM Users WHERE email = :email LIMIT 1"),
+                    {"email": email},
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
@@ -138,10 +138,10 @@ def create_app():
         token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
         return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
 
-    # POST /api/upload-pdf  (multipart/form-data)
-    @app.post("/api/upload-pdf")
+    # POST /api/upload-document  (multipart/form-data)
+    @app.post("/api/upload-document")
     @require_auth
-    def upload_pdf():
+    def upload_document():
         if "file" not in request.files:
             return jsonify({"error": "file is required (multipart/form-data)"}), 400
         file = request.files["file"]
@@ -197,8 +197,8 @@ def create_app():
             "size": int(row.size),
         }), 201
 
-    # GET /api/list-pdf
-    @app.get("/api/list-pdf")
+    # GET /api/list-documents
+    @app.get("/api/list-documents")
     @require_auth
     def list_pdf():
         try:
@@ -226,33 +226,71 @@ def create_app():
 
 
 
-    # GET /api/list-links
-    @app.get("/api/list-links")
+    # GET /api/list-versions
+    @app.get("/api/list-versions")
+    @app.get("/api/list-versions/<int:document_id>")
     @require_auth
-    def list_links():
+    def list_versions():
+        # Support both path param and ?id=/ ?documentid=
+        if document_id is None:
+            document_id = request.args.get("id") or request.args.get("documentid")
+            try:
+                document_id = int(document_id)
+            except (TypeError, ValueError):
+                return jsonify({"error": "document id required"}), 400
         try:
             with get_engine().connect() as conn:
                 rows = conn.execute(
                     text("""
                         SELECT v.id, v.documentid, v.link, v.intended_for, v.method
-                        FROM Version v
-                        JOIN Documents d ON d.id = v.documentid
-                        WHERE d.ownerid = :uid
-                        ORDER BY v.id DESC
+                        FROM Users u
+                        JOIN Documents d ON d.ownerid = u.id
+                        JOIN Versions v ON d.id = v.documentid
+                        WHERE u.login = :glogin AND d.id = :did
                     """),
-                    {"uid": int(g.user["id"])},
+                    {"glogin": str(g.user["login"]), "did": document_id},
                 ).all()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
-        links = [{
+        versions = [{
             "id": int(r.id),
             "documentid": int(r.documentid),
             "link": r.link,
             "intended_for": r.intended_for,
             "method": r.method,
         } for r in rows]
-        return jsonify({"links": links}), 200
+        return jsonify({"versions": versions}), 200
+    
+    
+    # GET /api/list-versions
+    @app.get("/api/list-all-versions")
+    @require_auth
+    def list_all_versions():
+        try:
+            with get_engine().connect() as conn:
+                rows = conn.execute(
+                    text("""
+                        SELECT v.id, v.documentid, v.link, v.intended_for, v.method
+                        FROM Users u
+                        JOIN Documents d ON d.ownerid = u.id
+                        JOIN Versions v ON d.id = v.documentid
+                        WHERE u.login = :glogin
+                    """),
+                    {"glogin": str(g.user["login"])},
+                ).all()
+        except Exception as e:
+            return jsonify({"error": f"database error: {str(e)}"}), 503
+
+        versions = [{
+            "id": int(r.id),
+            "documentid": int(r.documentid),
+            "link": r.link,
+            "intended_for": r.intended_for,
+            "method": r.method,
+        } for r in rows]
+        return jsonify({"versions": versions}), 200
+    
     # GET /api/get-document or /api/get-document/<id>  → returns the PDF (inline)
     @app.get("/api/get-document")
     @app.get("/api/get-document/<int:document_id>")
@@ -286,8 +324,13 @@ def create_app():
             return jsonify({"error": "document not found"}), 404
 
         file_path = Path(row.path)
-        
-        print("[get-document] path: " + str(file_path))
+
+        # Basic safety: ensure path is inside STORAGE_DIR and exists
+        try:
+            file_path.resolve().relative_to(app.config["STORAGE_DIR"].resolve())
+        except Exception:
+            # Path looks suspicious or outside storage
+            return jsonify({"error": "document path invalid"}), 500
 
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
