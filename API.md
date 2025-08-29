@@ -37,17 +37,16 @@ This endpoint creates a new user account in the system.
 {
   "login": <string>,
   "password": <string>,
-  "email": <email>,
-  "password": <string>
+  "email": <email>
 }
 ```
 
 **Return**
 ```json
 {
-  "id": "12345",
-  "login": "alice",
-  "email": "alice@example.com"
+  "id": <int>,
+  "login": <string>,
+  "email": <email>
 }
 ```
 
