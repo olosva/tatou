@@ -2,6 +2,34 @@
 
 ---
 
+# Routes
+
+- [create_user](#create_user) — **POST** `/api/create-user`
+- [create_watermark](#create_watermark)
+  - **GET** `/api/create-watermark/<int:document_id>`
+  - **GET** `/api/create-watermark`
+- [delete_document](#delete_document)
+  - **DELETE** `/api/delete-document/<document_id>`
+  - **DELETE, POST** `/api/delete-document`
+- [get_document](#get_document)
+  - **GET** `/api/get-document/<int:document_id>`
+  - **GET** `/api/get-document`
+- [get_version](#get_version) — **GET** `/api/get-version/<link>`
+- [get_watermarking_methods](#get_watermarking_methods) — **GET** `/api/get-watermarking-methods`
+- [healthz](#healthz) — **GET** `/healthz`
+- [list_all_versions](#list_all_versions) — **GET** `/api/list-all-versions`
+- [list_pdf](#list_pdf) — **GET** `/api/list-documents`
+- [list_versions](#list_versions)
+  - **GET** `/api/list-versions/<int:document_id>`
+  - **GET** `/api/list-versions`
+- [login](#login) — **POST** `/api/login`
+- [read_watermark](#read_watermark)
+  - **GET** `/api/read-watermark/<int:document_id>`
+  - **GET** `/api/read-watermark`
+- [upload_document](#upload_document) — **POST** `/api/upload-document`
+
+
+
 ## healthz
 
 **Path**
