@@ -12,8 +12,8 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
-
-from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
+import watermarking_utils as WMUtils
+#from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
 
 def create_app():
     app = Flask(__name__)
@@ -562,7 +562,7 @@ def create_app():
 
         # check watermark applicability
         try:
-            applicable = is_watermarking_applicable(
+            applicable = WMUtils.is_watermarking_applicable(
                 method=method,
                 pdf=str(file_path),
                 position=position
@@ -574,7 +574,7 @@ def create_app():
 
         # apply watermark → bytes
         try:
-            wm_bytes: bytes = apply_watermark(
+            wm_bytes: bytes = WMUtils.apply_watermark(
                 pdf=str(file_path),
                 secret=secret,
                 key=key,
@@ -647,12 +647,91 @@ def create_app():
     def get_watermarking_methods():
         methods = []
 
-        for m in METHODS:
+        for m in WMUtils.METHODS:
             methods.append({"name": m, "description": get_method(m).get_usage()})
             
         return jsonify({"methods": methods, "count": len(methods)}), 200
+        
+    # GET /api/read-watermark
+    @app.get("/api/read-watermark")
+    @app.get("/api/read-watermark/<int:document_id>")
+    @require_auth
+    def read_watermark(document_id: int | None = None):
+        # accept id from path, query (?id= / ?documentid=), or JSON body on GET
+        if not document_id:
+            document_id = (
+                request.args.get("id")
+                or request.args.get("documentid")
+                or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
+            )
+        try:
+            doc_id = document_id
+        except (TypeError, ValueError):
+            return jsonify({"error": "document id required"}), 400
+            
+        payload = request.get_json(silent=True) or {}
+        # allow a couple of aliases for convenience
+        method = payload.get("method")
+        position = payload.get("position") or None
+        key = payload.get("key")
+
+        # validate input
+        try:
+            doc_id = int(doc_id)
+        except (TypeError, ValueError):
+            return jsonify({"error": "document_id (int) is required"}), 400
+        if not method or not isinstance(key, str):
+            return jsonify({"error": "method, and key are required"}), 400
+
+        # lookup the document; enforce ownership
+        try:
+            with get_engine().connect() as conn:
+                row = conn.execute(
+                    text("""
+                        SELECT id, name, path
+                        FROM Documents
+                        WHERE id = :id
+                        LIMIT 1
+                    """),
+                    {"id": doc_id},
+                ).first()
+        except Exception as e:
+            return jsonify({"error": f"database error: {str(e)}"}), 503
+
+        if not row:
+            return jsonify({"error": "document not found"}), 404
+
+        # resolve path safely under STORAGE_DIR
+        storage_root = Path(app.config["STORAGE_DIR"]).resolve()
+        file_path = Path(row.path)
+        if not file_path.is_absolute():
+            file_path = storage_root / file_path
+        file_path = file_path.resolve()
+        try:
+            file_path.relative_to(storage_root)
+        except ValueError:
+            return jsonify({"error": "document path invalid"}), 500
+        if not file_path.exists():
+            return jsonify({"error": "file missing on disk"}), 410
+        
+        secret = None
+        try:
+            secret = WMUtils.read_watermark(
+                method=method,
+                pdf=str(file_path),
+                key=key
+            )
+        except Exception as e:
+            return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
+        return jsonify({
+            "documentid": doc_id,
+            "secret": secret,
+            "method": method,
+            "position": position
+        }), 201
 
     return app
+    
 
 # WSGI entrypoint
 app = create_app()
