@@ -4,29 +4,29 @@
 
 # Routes
 
-- [create_user](#create_user) — **POST** `/api/create-user`
-- [create_watermark](#create_watermark)
+- [create-user](#create-user) — **POST** `/api/create-user`
+- [create-watermark](#create-watermark)
   - **GET** `/api/create-watermark/<int:document_id>`
   - **GET** `/api/create-watermark`
-- [delete_document](#delete_document)
+- [delete-document](#delete-document)
   - **DELETE** `/api/delete-document/<document_id>`
   - **DELETE, POST** `/api/delete-document`
-- [get_document](#get_document)
+- [get-document](#get-document)
   - **GET** `/api/get-document/<int:document_id>`
   - **GET** `/api/get-document`
-- [get_version](#get_version) — **GET** `/api/get-version/<link>`
-- [get_watermarking_methods](#get_watermarking_methods) — **GET** `/api/get-watermarking-methods`
+- [get-version](#get-version) — **GET** `/api/get-version/<link>`
+- [get-watermarking_methods](#get-watermarking-methods) — **GET** `/api/get-watermarking-methods`
 - [healthz](#healthz) — **GET** `/healthz`
-- [list_all_versions](#list_all_versions) — **GET** `/api/list-all-versions`
-- [list_pdf](#list_pdf) — **GET** `/api/list-documents`
-- [list_versions](#list_versions)
+- [list-all-versions](#list-all-versions) — **GET** `/api/list-all-versions`
+- [list-pdf](#list-pdf) — **GET** `/api/list-documents`
+- [list-versions](#list-versions)
   - **GET** `/api/list-versions/<int:document_id>`
   - **GET** `/api/list-versions`
 - [login](#login) — **POST** `/api/login`
-- [read_watermark](#read_watermark)
+- [read-watermark](#read-watermark)
   - **GET** `/api/read-watermark/<int:document_id>`
   - **GET** `/api/read-watermark`
-- [upload_document](#upload_document) — **POST** `/api/upload-document`
+- [upload-document](#upload-document) — **POST** `/api/upload-document`
 
 
 
@@ -271,3 +271,131 @@ Inline PDF file in binary format.
 
 **Specification**
  * Requires authentication
+ 
+  ## get-watermarking-methods
+ 
+**Description**  
+This endpoint lists all available watermarking methods.
+ 
+**Path**
+`GET /api/get-watermarking-methods`
+
+
+**Parameters**
+_None_
+
+
+**Return**
+```json
+{
+    "count": <int>,
+    "methods": [
+        {
+            "description":<string>,
+            "name": <string>"
+        }
+    ]
+}
+```
+
+**Specification**
+ * The endpoint MUST return all methods in `watermarking_utils.METHODS`.
+ 
+   ## read-watermark
+ 
+**Description**  
+This endpoint reads information contain in a pdf document's watermark with the provided method.
+ 
+**Path**
+`GET /api/read-watermark`
+
+**Parameters**
+```json
+{
+    "method": <string>,
+    "position": <string>,
+    "key": <string>,
+    "id": <int>
+}
+```
+ 
+**Path**
+`GET /api/read-watermark<int:document_id>`
+
+
+**Parameters**
+```json
+{
+    "method": <string>,
+    "position": <string>,
+    "key": <string>
+}
+```
+
+
+**Return**
+```json
+{
+    "documentid": <int>,
+    "secret": <string>,
+    "method": <string>,
+    "position": <string>
+}
+```
+
+**Specification**
+ * The endpoint MUST return the secret read in the document.
+
+
+   ## create-watermark
+ 
+**Description**  
+This endpoint reads information contain in a pdf document's watermark with the provided method.
+ 
+**Path**
+`GET /api/create-watermark`
+
+**Parameters**
+```json
+{
+    "method": <string>,
+    "position": <string>,
+    "key": <string>,
+    "secret": <string>,
+    "intended_for": <string>,
+    "id": <int>
+}
+```
+ 
+**Path**
+`GET /api/create-watermark<int:document_id>`
+
+
+**Parameters**
+```json
+{
+    "method": <string>,
+    "position": <string>,
+    "key": <string>,
+    "secret": <string>,
+    "intended_for": <string>
+}
+```
+
+
+**Return**
+```json
+{
+    "id": <int>,
+    "documentid": <int>,
+    "link": <string>,
+    "intended_for": <string>,
+    "method": <string>,
+    "position": <string>,
+    "filename": <string>,
+    "size": <int>
+}
+```
+
+**Specification**
+ * Only the owner of a document should 
