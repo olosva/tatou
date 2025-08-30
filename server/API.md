@@ -6,8 +6,8 @@
 
 - [create-user](#create-user) — **POST** `/api/create-user`
 - [create-watermark](#create-watermark)
-  - **GET** `/api/create-watermark/<int:document_id>`
-  - **GET** `/api/create-watermark`
+  - **POST** `/api/create-watermark/<int:document_id>`
+  - **POST** `/api/create-watermark`
 - [delete-document](#delete-document)
   - **DELETE** `/api/delete-document/<document_id>`
   - **DELETE, POST** `/api/delete-document`
@@ -24,8 +24,8 @@
   - **GET** `/api/list-versions`
 - [login](#login) — **POST** `/api/login`
 - [read-watermark](#read-watermark)
-  - **GET** `/api/read-watermark/<int:document_id>`
-  - **GET** `/api/read-watermark`
+  - **POST** `/api/read-watermark/<int:document_id>`
+  - **POST** `/api/read-watermark`
 - [upload-document](#upload-document) — **POST** `/api/upload-document`
 
 
@@ -307,7 +307,7 @@ _None_
 This endpoint reads information contain in a pdf document's watermark with the provided method.
  
 **Path**
-`GET /api/read-watermark`
+`POST /api/read-watermark`
 
 **Parameters**
 ```json
@@ -320,7 +320,7 @@ This endpoint reads information contain in a pdf document's watermark with the p
 ```
  
 **Path**
-`GET /api/read-watermark<int:document_id>`
+`POST /api/read-watermark<int:document_id>`
 
 
 **Parameters**
@@ -353,7 +353,7 @@ This endpoint reads information contain in a pdf document's watermark with the p
 This endpoint reads information contain in a pdf document's watermark with the provided method.
  
 **Path**
-`GET /api/create-watermark`
+`POST /api/create-watermark`
 
 **Parameters**
 ```json
@@ -368,7 +368,7 @@ This endpoint reads information contain in a pdf document's watermark with the p
 ```
  
 **Path**
-`GET /api/create-watermark<int:document_id>`
+`POST /api/create-watermark<int:document_id>`
 
 
 **Parameters**

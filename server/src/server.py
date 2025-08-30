@@ -77,6 +77,15 @@ def create_app():
         return h.hexdigest()
 
     # --- Routes ---
+    
+    @app.route("/<path:filename>")
+    def static_files(filename):
+        return app.send_static_file(filename)
+
+    @app.route("/")
+    def home():
+        return app.send_static_file("index.html")
+    
     @app.get("/healthz")
     def healthz():
         try:
@@ -203,7 +212,7 @@ def create_app():
     # GET /api/list-documents
     @app.get("/api/list-documents")
     @require_auth
-    def list_pdf():
+    def list_documents():
         try:
             with get_engine().connect() as conn:
                 rows = conn.execute(
@@ -496,9 +505,9 @@ def create_app():
             "note": delete_error,   # null/omitted if everything was fine
         }), 200
         
-    # GET /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
-    @app.get("/api/create-watermark")
-    @app.get("/api/create-watermark/<int:document_id>")
+    # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
+    @app.post("/api/create-watermark")
+    @app.post("/api/create-watermark/<int:document_id>")
     @require_auth
     def create_watermark(document_id: int | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on GET
@@ -648,13 +657,13 @@ def create_app():
         methods = []
 
         for m in WMUtils.METHODS:
-            methods.append({"name": m, "description": get_method(m).get_usage()})
+            methods.append({"name": m, "description": WMUtils.get_method(m).get_usage()})
             
         return jsonify({"methods": methods, "count": len(methods)}), 200
         
-    # GET /api/read-watermark
-    @app.get("/api/read-watermark")
-    @app.get("/api/read-watermark/<int:document_id>")
+    # POST /api/read-watermark
+    @app.post("/api/read-watermark")
+    @app.post("/api/read-watermark/<int:document_id>")
     @require_auth
     def read_watermark(document_id: int | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on GET
