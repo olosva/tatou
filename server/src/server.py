@@ -666,7 +666,7 @@ def create_app():
     @app.post("/api/read-watermark/<int:document_id>")
     @require_auth
     def read_watermark(document_id: int | None = None):
-        # accept id from path, query (?id= / ?documentid=), or JSON body on GET
+        # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -692,7 +692,7 @@ def create_app():
         if not method or not isinstance(key, str):
             return jsonify({"error": "method, and key are required"}), 400
 
-        # lookup the document; enforce ownership
+        # lookup the document; FIXME enforce ownership
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -700,7 +700,6 @@ def create_app():
                         SELECT id, name, path
                         FROM Documents
                         WHERE id = :id
-                        LIMIT 1
                     """),
                     {"id": doc_id},
                 ).first()
