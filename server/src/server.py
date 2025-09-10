@@ -26,6 +26,7 @@ from watermarking_method import WatermarkingMethod
 
 def create_app():
     app = Flask(__name__)
+    
 
     # --- Config ---
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -103,7 +104,7 @@ def create_app():
             db_ok = True
         except Exception:
             db_ok = False
-        return jsonify({"message": "The server is up and running.", "db_connected": db_ok}), 200
+        return jsonify({"message": "The server is up and running. Broder jacob har kontrollerat", "db_connected": db_ok}), 200
 
     # POST /api/create-user {email, login, password}
     @app.post("/api/create-user")
