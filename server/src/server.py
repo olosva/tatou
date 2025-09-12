@@ -104,7 +104,8 @@ def create_app():
             db_ok = True
         except Exception:
             db_ok = False
-        return jsonify({"message": "The server is up and running. Broder jacob har kontrollerat", "db_connected": db_ok}), 200
+            return jsonify({"message": "The server is down.", "db_connected": db_ok}), 503
+        return jsonify({"message": "The server is up and running.", "db_connected": db_ok}), 200
 
     # POST /api/create-user {email, login, password}
     @app.post("/api/create-user")
@@ -142,6 +143,7 @@ def create_app():
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip()
         password = payload.get("password") or ""
+        print(email + password)
         if not email or not password:
             return jsonify({"error": "email and password are required"}), 400
 
