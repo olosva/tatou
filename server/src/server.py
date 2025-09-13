@@ -13,6 +13,9 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+
 import pickle as _std_pickle
 try:
     import dill as _pickle  # allows loading classes not importable by module path
@@ -26,7 +29,13 @@ from watermarking_method import WatermarkingMethod
 
 def create_app():
     app = Flask(__name__)
-    
+
+    # --- Limiter --- To protect against brute-force (mainly against Mr_Important)
+    limiter = Limiter(
+        app,
+        key_func=get_remote_address,  # Uses the client IP as "key"
+        default_limits=["200 per day", "50 per hour"],  # General limits
+    )
 
     # --- Config ---
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -118,34 +127,42 @@ def create_app():
         return jsonify({"message": "The server is up and running.", "db_connected": db_ok}), 200
 
     # POST /api/create-user {email, login, password}
-    # @app.post("/api/create-user")
-    # def create_user():
-    #     payload = request.get_json(silent=True) or {}
-    #     email = (payload.get("email") or "").strip().lower()
-    #     login = (payload.get("login") or "").strip()
-    #     password = payload.get("password") or ""
-    #     if not email or not login or not password:
-    #         return jsonify({"error": "email, login, and password are required"}), 400
-    #
-    #     hpw = generate_password_hash(password)
-    #
-    #     try:
-    #         with get_engine().begin() as conn:
-    #             res = conn.execute(
-    #                 text("INSERT INTO Users (email, hpassword, login) VALUES (:email, :hpw, :login)"),
-    #                 {"email": email, "hpw": hpw, "login": login},
-    #             )
-    #             uid = int(res.lastrowid)
-    #             row = conn.execute(
-    #                 text("SELECT id, email, login FROM Users WHERE id = :id"),
-    #                 {"id": uid},
-    #             ).one()
-    #     except IntegrityError:
-    #         return jsonify({"error": "email or login already exists"}), 409
-    #     except Exception as e:
-    #         return jsonify({"error": f"database error: {str(e)}"}), 503
-    #
-    #     return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
+    @app.post("/api/create-user")
+    @limiter.limit("5 per minute")  # Max 5 calls per minute (per IP address)
+    def create_user():
+        payload = request.get_json(silent=True) or {}
+        email = (payload.get("email") or "").strip().lower()
+        login = (payload.get("login") or "").strip()
+        password = payload.get("password") or ""
+        if not email or not login or not password:
+            return jsonify({"error": "email, login, and password are required"}), 400
+        if len(password) < 10:
+            return jsonify({"error": "password must be at least 8 characters"}), 400
+        if "@" not in email:
+            return jsonify({"error": "invalid email address"}), 400
+
+        hpw = generate_password_hash(password)
+
+        # SQLAlchemy takes care to protect against SQL injection using parameterized queries
+        try:
+            with get_engine().begin() as conn:
+                res = conn.execute(
+                    text("INSERT INTO Users (email, hpassword, login) VALUES (:email, :hpw, :login)"),
+                    {"email": email, "hpw": hpw, "login": login},
+                )
+                uid = int(res.lastrowid)
+                row = conn.execute(
+                    text("SELECT id, email, login FROM Users WHERE id = :id"),
+                    {"id": uid},
+                ).one()
+        except IntegrityError:
+            app.logger.warning(f"Duplicate user: {email} / {login}")
+            return jsonify({"error": "invalid input"}), 400
+        except Exception as e:
+            app.logger.error(f"DB error: {e}")
+            return jsonify({"error": "internal server error"}), 503
+
+        return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
     # @app.post("/api/login")
