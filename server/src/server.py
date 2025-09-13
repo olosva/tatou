@@ -90,6 +90,16 @@ def create_app():
     
     @app.route("/<path:filename>")
     def static_files(filename):
+        # List of allowed files (these can be accessed by the public without security risk)
+        allowed_files = {
+            "documents.html",
+            "index.html",
+            "login.html",
+            "signup.html",
+            "style.css",
+        }
+        if filename not in allowed_files:
+            return jsonify({"error": "Access denied"}), 403
         return app.send_static_file(filename)
 
     @app.route("/")
