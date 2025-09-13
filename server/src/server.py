@@ -108,59 +108,59 @@ def create_app():
         return jsonify({"message": "The server is up and running.", "db_connected": db_ok}), 200
 
     # POST /api/create-user {email, login, password}
-    @app.post("/api/create-user")
-    def create_user():
-        payload = request.get_json(silent=True) or {}
-        email = (payload.get("email") or "").strip().lower()
-        login = (payload.get("login") or "").strip()
-        password = payload.get("password") or ""
-        if not email or not login or not password:
-            return jsonify({"error": "email, login, and password are required"}), 400
-
-        hpw = generate_password_hash(password)
-
-        try:
-            with get_engine().begin() as conn:
-                res = conn.execute(
-                    text("INSERT INTO Users (email, hpassword, login) VALUES (:email, :hpw, :login)"),
-                    {"email": email, "hpw": hpw, "login": login},
-                )
-                uid = int(res.lastrowid)
-                row = conn.execute(
-                    text("SELECT id, email, login FROM Users WHERE id = :id"),
-                    {"id": uid},
-                ).one()
-        except IntegrityError:
-            return jsonify({"error": "email or login already exists"}), 409
-        except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
-
-        return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
+    # @app.post("/api/create-user")
+    # def create_user():
+    #     payload = request.get_json(silent=True) or {}
+    #     email = (payload.get("email") or "").strip().lower()
+    #     login = (payload.get("login") or "").strip()
+    #     password = payload.get("password") or ""
+    #     if not email or not login or not password:
+    #         return jsonify({"error": "email, login, and password are required"}), 400
+    #
+    #     hpw = generate_password_hash(password)
+    #
+    #     try:
+    #         with get_engine().begin() as conn:
+    #             res = conn.execute(
+    #                 text("INSERT INTO Users (email, hpassword, login) VALUES (:email, :hpw, :login)"),
+    #                 {"email": email, "hpw": hpw, "login": login},
+    #             )
+    #             uid = int(res.lastrowid)
+    #             row = conn.execute(
+    #                 text("SELECT id, email, login FROM Users WHERE id = :id"),
+    #                 {"id": uid},
+    #             ).one()
+    #     except IntegrityError:
+    #         return jsonify({"error": "email or login already exists"}), 409
+    #     except Exception as e:
+    #         return jsonify({"error": f"database error: {str(e)}"}), 503
+    #
+    #     return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
-    @app.post("/api/login")
-    def login():
-        payload = request.get_json(silent=True) or {}
-        email = (payload.get("email") or "").strip()
-        password = payload.get("password") or ""
-        print(email + password)
-        if not email or not password:
-            return jsonify({"error": "email and password are required"}), 400
-
-        try:
-            with get_engine().connect() as conn:
-                row = conn.execute(
-                    text("SELECT id, email, login, hpassword FROM Users WHERE email = :email LIMIT 1"),
-                    {"email": email},
-                ).first()
-        except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
-
-        if not row or not check_password_hash(row.hpassword, password):
-            return jsonify({"error": "invalid credentials"}), 401
-
-        token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
-        return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
+    # @app.post("/api/login")
+    # def login():
+    #     payload = request.get_json(silent=True) or {}
+    #     email = (payload.get("email") or "").strip()
+    #     password = payload.get("password") or ""
+    #     print(email + password)
+    #     if not email or not password:
+    #         return jsonify({"error": "email and password are required"}), 400
+    #
+    #     try:
+    #         with get_engine().connect() as conn:
+    #             row = conn.execute(
+    #                 text("SELECT id, email, login, hpassword FROM Users WHERE email = :email LIMIT 1"),
+    #                 {"email": email},
+    #             ).first()
+    #     except Exception as e:
+    #         return jsonify({"error": f"database error: {str(e)}"}), 503
+    #
+    #     if not row or not check_password_hash(row.hpassword, password):
+    #         return jsonify({"error": "invalid credentials"}), 401
+    #
+    #     token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
+    #     return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
 
     # POST /api/upload-document  (multipart/form-data)
     # @app.post("/api/upload-document")
@@ -379,52 +379,52 @@ def create_app():
     #     return resp
     
     # GET /api/get-version/<link>  → returns the watermarked PDF (inline)
-    @app.get("/api/get-version/<link>")
-    def get_version(link: str):
-        
-        try:
-            with get_engine().connect() as conn:
-                row = conn.execute(
-                    text("""
-                        SELECT *
-                        FROM Versions
-                        WHERE link = :link
-                        LIMIT 1
-                    """),
-                    {"link": link},
-                ).first()
-        except Exception as e:
-            return jsonify({"error": f"database error: {str(e)}"}), 503
-
-        # Don’t leak whether a doc exists for another user
-        if not row:
-            return jsonify({"error": "document not found"}), 404
-
-        file_path = Path(row.path)
-
-        # Basic safety: ensure path is inside STORAGE_DIR and exists
-        try:
-            file_path.resolve().relative_to(app.config["STORAGE_DIR"].resolve())
-        except Exception:
-            # Path looks suspicious or outside storage
-            return jsonify({"error": "document path invalid"}), 500
-
-        if not file_path.exists():
-            return jsonify({"error": "file missing on disk"}), 410
-
-        # Serve inline with caching hints + ETag based on stored sha256
-        resp = send_file(
-            file_path,
-            mimetype="application/pdf",
-            as_attachment=False,
-            download_name=row.link if row.link.lower().endswith(".pdf") else f"{row.link}.pdf",
-            conditional=True,   # enables 304 if If-Modified-Since/Range handling
-            max_age=0,
-            last_modified=file_path.stat().st_mtime,
-        )
-
-        resp.headers["Cache-Control"] = "private, max-age=0"
-        return resp
+    # @app.get("/api/get-version/<link>")
+    # def get_version(link: str):
+    #
+    #     try:
+    #         with get_engine().connect() as conn:
+    #             row = conn.execute(
+    #                 text("""
+    #                     SELECT *
+    #                     FROM Versions
+    #                     WHERE link = :link
+    #                     LIMIT 1
+    #                 """),
+    #                 {"link": link},
+    #             ).first()
+    #     except Exception as e:
+    #         return jsonify({"error": f"database error: {str(e)}"}), 503
+    #
+    #     # Don’t leak whether a doc exists for another user
+    #     if not row:
+    #         return jsonify({"error": "document not found"}), 404
+    #
+    #     file_path = Path(row.path)
+    #
+    #     # Basic safety: ensure path is inside STORAGE_DIR and exists
+    #     try:
+    #         file_path.resolve().relative_to(app.config["STORAGE_DIR"].resolve())
+    #     except Exception:
+    #         # Path looks suspicious or outside storage
+    #         return jsonify({"error": "document path invalid"}), 500
+    #
+    #     if not file_path.exists():
+    #         return jsonify({"error": "file missing on disk"}), 410
+    #
+    #     # Serve inline with caching hints + ETag based on stored sha256
+    #     resp = send_file(
+    #         file_path,
+    #         mimetype="application/pdf",
+    #         as_attachment=False,
+    #         download_name=row.link if row.link.lower().endswith(".pdf") else f"{row.link}.pdf",
+    #         conditional=True,   # enables 304 if If-Modified-Since/Range handling
+    #         max_age=0,
+    #         last_modified=file_path.stat().st_mtime,
+    #     )
+    #
+    #     resp.headers["Cache-Control"] = "private, max-age=0"
+    #     return resp
     
     # Helper: resolve path safely under STORAGE_DIR (handles absolute/relative)
     def _safe_resolve_under_storage(p: str, storage_root: Path) -> Path:
@@ -727,14 +727,14 @@ def create_app():
     
     
     # GET /api/get-watermarking-methods -> {"methods":[{"name":..., "description":...}, ...], "count":N}
-    @app.get("/api/get-watermarking-methods")
-    def get_watermarking_methods():
-        methods = []
-
-        for m in WMUtils.METHODS:
-            methods.append({"name": m, "description": WMUtils.get_method(m).get_usage()})
-            
-        return jsonify({"methods": methods, "count": len(methods)}), 200
+    # @app.get("/api/get-watermarking-methods")
+    # def get_watermarking_methods():
+    #     methods = []
+    #
+    #     for m in WMUtils.METHODS:
+    #         methods.append({"name": m, "description": WMUtils.get_method(m).get_usage()})
+    #
+    #     return jsonify({"methods": methods, "count": len(methods)}), 200
         
     # POST /api/read-watermark
     # @app.post("/api/read-watermark")
