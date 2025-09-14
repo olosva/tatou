@@ -165,29 +165,34 @@ def create_app():
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
-    # @app.post("/api/login")
-    # def login():
-    #     payload = request.get_json(silent=True) or {}
-    #     email = (payload.get("email") or "").strip()
-    #     password = payload.get("password") or ""
-    #     print(email + password)
-    #     if not email or not password:
-    #         return jsonify({"error": "email and password are required"}), 400
-    #
-    #     try:
-    #         with get_engine().connect() as conn:
-    #             row = conn.execute(
-    #                 text("SELECT id, email, login, hpassword FROM Users WHERE email = :email LIMIT 1"),
-    #                 {"email": email},
-    #             ).first()
-    #     except Exception as e:
-    #         return jsonify({"error": f"database error: {str(e)}"}), 503
-    #
-    #     if not row or not check_password_hash(row.hpassword, password):
-    #         return jsonify({"error": "invalid credentials"}), 401
-    #
-    #     token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
-    #     return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
+    @app.post("/api/login")
+    @limiter.limit("5 per minute")  # Max 5 calls per minute (per IP address)
+    def login():
+        payload = request.get_json(silent=True) or {}
+        email = (payload.get("email") or "").strip()
+        password = payload.get("password") or ""
+        # print(email + password) # Seems to be no point to print the email and password
+        if not email or not password:
+            return jsonify({"error": "email and password are required"}), 400
+        if "@" not in email:
+            return jsonify({"error": "invalid email address"}), 400
+
+        try:
+            with get_engine().connect() as conn:
+                row = conn.execute(
+                    text("SELECT id, email, login, hpassword FROM Users WHERE email = :email LIMIT 1"),
+                    {"email": email},
+                ).first()
+        except Exception as e:
+            app.logger.error(f"DB error: {e}")
+            return jsonify({"error": "internal server error"}), 503
+
+        if not row or not check_password_hash(row.hpassword, password):
+            app.logger.warning(f"Failed login attempt for: {email}")
+            return jsonify({"error": "invalid credentials"}), 401
+
+        token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
+        return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
 
     # POST /api/upload-document  (multipart/form-data)
     # @app.post("/api/upload-document")
