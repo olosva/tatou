@@ -13,9 +13,6 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
-#from flask_limiter import Limiter
-#from flask_limiter.util import get_remote_address
-
 import pickle as _std_pickle
 try:
     import dill as _pickle  # allows loading classes not importable by module path
@@ -29,13 +26,6 @@ from watermarking_method import WatermarkingMethod
 
 def create_app():
     app = Flask(__name__)
-
-    # # --- Limiter --- To protect against brute-force (mainly against Mr_Important)
-    # limiter = Limiter(
-    #     app,
-    #     key_func=get_remote_address,  # Uses the client IP as "key"
-    #     default_limits=["200 per day", "50 per hour"],  # General limits
-    # )
 
     # --- Config ---
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
@@ -128,7 +118,6 @@ def create_app():
 
     # POST /api/create-user {email, login, password}
     @app.post("/api/create-user")
-    #@limiter.limit("5 per minute")  # Max 5 calls per minute (per IP address)
     def create_user():
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip().lower()
@@ -166,7 +155,6 @@ def create_app():
 
     # POST /api/login {login, password}
     @app.post("/api/login")
-    #@limiter.limit("5 per minute")  # Max 5 calls per minute (per IP address)
     def login():
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip()
