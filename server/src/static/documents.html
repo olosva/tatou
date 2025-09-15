@@ -121,7 +121,9 @@
       docsBody.innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
       try {
         const resp = await apiFetch('/api/list-documents');
-        if (!resp.ok) throw new Error('HTTP '+resp.status);
+        //const json = await resp.json();
+        //alert(JSON.stringify(json, null, 2));
+        if (!resp.ok) throw new Error('HTTP '+resp.status + "det är här det fuckar");
         const data = await resp.json();
         const rows = (data.documents || []).map(doc => {
           const created = doc.creation ? new Date(doc.creation).toLocaleString() : '';
