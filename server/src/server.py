@@ -178,7 +178,10 @@ def create_app():
             app.logger.warning(f"Failed login attempt for: {email}")
             return jsonify({"error": "invalid credentials"}), 401
 
+        print(row.id, row.login, row.email)
+        #the same toke is generated for all users every time they log in
         token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
+        print(token)
         return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
 
     # When user uploads document, do we want to give it a new name? Otherwise that name will

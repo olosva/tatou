@@ -164,6 +164,7 @@
         e.currentTarget.reset();
         await loadDocuments();
       } catch (err) {
+        //alert(err.message)
         statusEl.textContent = 'Upload failed: ' + err.message;
       } finally {
         setTimeout(()=> statusEl.textContent = '', 3000);
