@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 
 import pickle as _std_pickle
+import secrets
 try:
     import dill as _pickle  # allows loading classes not importable by module path
 except Exception:  # dill is optional
@@ -22,6 +23,7 @@ except Exception:  # dill is optional
 import watermarking_utils as WMUtils
 from watermarking_method import WatermarkingMethod
 #from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
+active_sessions = {}
 
 
 def create_app():
@@ -65,16 +67,29 @@ def create_app():
         @wraps(f)
         def wrapper(*args, **kwargs):
             auth = request.headers.get("Authorization", "")
+            #print(auth)
             if not auth.startswith("Bearer "):
                 return _auth_error("Missing or invalid Authorization header")
             token = auth.split(" ", 1)[1].strip()
             try:
                 data = _serializer().loads(token, max_age=app.config["TOKEN_TTL_SECONDS"])
+                #print(data)
+                #print("rad 76")
+                #extract sessionID from the token
+                session_id = data["session_id"]
+                #check that the sessionID is in the active sessions
+                if session_id not in active_sessions:
+                    return _auth_error("Invalid session (naughty boy?)")
             except SignatureExpired:
                 return _auth_error("Token expired")
             except BadSignature:
                 return _auth_error("Invalid token")
-            g.user = {"id": int(data["uid"]), "login": data["login"], "email": data.get("email")}
+            #extract user info from the active sessions using the sessionID and set g.user with the info
+            user_data = active_sessions[session_id]
+            g.user = {"id": int(user_data["uid"]), "login": user_data["login"], "email": user_data.get("email")}
+            
+            #print(g.user)
+            #print("rad 92")
             return f(*args, **kwargs)
         return wrapper
 
@@ -123,11 +138,16 @@ def create_app():
         email = (payload.get("email") or "").strip().lower()
         login = (payload.get("login") or "").strip()
         password = payload.get("password") or ""
+        #print(email, login, password)
         if not email or not login or not password:
+            #print("det är här det fuckar1")
             return jsonify({"error": "email, login, and password are required"}), 400
-        if len(password) < 10:
+        #change password for easier testing CHANGE BEFORE PRODUCTION
+        if len(password) < 3:
+            #print("det är här det fuckar2")
             return jsonify({"error": "password must be at least 8 characters"}), 400
         if "@" not in email:
+            #print("det är här det fuckar3")
             return jsonify({"error": "invalid email address"}), 400
 
         hpw = generate_password_hash(password)
@@ -145,12 +165,14 @@ def create_app():
                     {"id": uid},
                 ).one()
         except IntegrityError:
+            #print("det är här det fuckar4")
             app.logger.warning(f"Duplicate user: {email} / {login}")
             return jsonify({"error": "invalid input"}), 400
         except Exception as e:
+           # print("det är här det fuckar5")
             app.logger.error(f"DB error: {e}")
             return jsonify({"error": "internal server error"}), 503
-
+        #print("det är här det fuckar6")
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
@@ -178,11 +200,23 @@ def create_app():
             app.logger.warning(f"Failed login attempt for: {email}")
             return jsonify({"error": "invalid credentials"}), 401
 
-        print(row.id, row.login, row.email)
-        #the same toke is generated for all users every time they log in
-        token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
-        print(token)
+        
+        #set a session variable instead of a token
+        session_id = secrets.token_urlsafe(32)
+        #add the session to the active sessions
+        active_sessions[session_id] = {"uid": int(row.id), "login": row.login, "email": row.email}
+        
+        #token now contains the same info as before, but with the session id
+        #we can then look up the session id in the active sessions to get the user info and compare it to the u.id in the token
+        token = _serializer().dumps({"session_id": session_id})
+        #print(token)
         return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
+        #print(row.id, row.login, row.email)
+        #the same toke is generated for all users every time they log in
+        
+        #token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
+        #print(token)
+        #return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
 
     # When user uploads document, do we want to give it a new name? Otherwise that name will
     # form the foundation of the secret link (which currently is just the sha1 of the name).
@@ -251,6 +285,8 @@ def create_app():
     @require_auth
     def list_documents():
         try:
+            #print(int(g.user["id"]))
+            #print("kommer hit")
             with get_engine().connect() as conn:
                 rows = conn.execute(
                     text("""

@@ -123,7 +123,7 @@
         const resp = await apiFetch('/api/list-documents');
         //const json = await resp.json();
         //alert(JSON.stringify(json, null, 2));
-        if (!resp.ok) throw new Error('HTTP '+resp.status + "det är här det fuckar");
+        if (!resp.ok) throw new Error('HTTP '+resp.status);
         const data = await resp.json();
         const rows = (data.documents || []).map(doc => {
           const created = doc.creation ? new Date(doc.creation).toLocaleString() : '';

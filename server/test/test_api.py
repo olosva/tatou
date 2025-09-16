@@ -27,3 +27,5 @@ def test_tokens_unique_for_different_users(client):
     token_a = res_a.get_json()["token"]
     token_b = res_b.get_json()["token"]
     assert token_a != token_b, "Tokens must be unique per user"
+    
+    
