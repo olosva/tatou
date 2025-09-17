@@ -408,7 +408,7 @@ def create_app():
                         WHERE id = :id AND ownerid = :uid
                         LIMIT 1
                     """),
-                    {"id": document_id, "uid": int(g.user["id"])},
+                    {"id": document_id, "uid": g.user["id"]},
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
@@ -519,8 +519,10 @@ def create_app():
     # DELETE /api/delete-document  (and variants)
     @app.route("/api/delete-document", methods=["DELETE", "POST"])  # POST supported for convenience
     @app.route("/api/delete-document/<document_id>", methods=["DELETE"])
-    def delete_document(document_id: int | None = None):
+    @require_auth
+    def delete_document(document_id: str | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on POST
+        #print(document_id)
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -533,10 +535,14 @@ def create_app():
             return jsonify({"error": "document id required"}), 400
 
         # Fetch the document (enforce ownership)
+        #fixed sql injection vulnerability here by using parameterized queries
         try:
             with get_engine().connect() as conn:
-                query = "SELECT * FROM Documents WHERE id = " + doc_id
-                row = conn.execute(text(query)).first()
+                print("här det fuckar")
+                row = conn.execute(
+                    text("SELECT * FROM Documents WHERE id =  :id AND ownerid = :uid LIMIT 1"),
+                    {"id": doc_id, "uid": g.user["id"]},
+                ).one()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
