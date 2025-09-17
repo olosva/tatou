@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 
 import pickle as _std_pickle
 import secrets
+import uuid
 try:
     import dill as _pickle  # allows loading classes not importable by module path
 except Exception:  # dill is optional
@@ -86,7 +87,7 @@ def create_app():
                 return _auth_error("Invalid token")
             #extract user info from the active sessions using the sessionID and set g.user with the info
             user_data = active_sessions[session_id]
-            g.user = {"id": int(user_data["uid"]), "login": user_data["login"], "email": user_data.get("email")}
+            g.user = {"id": user_data["uid"], "login": user_data["login"], "email": user_data.get("email")}
             
             #print(g.user)
             #print("rad 92")
@@ -138,6 +139,8 @@ def create_app():
         email = (payload.get("email") or "").strip().lower()
         login = (payload.get("login") or "").strip()
         password = payload.get("password") or ""
+        #creates a random uid instead of autoincrement to avoid enumeration attacks
+        uid = str(uuid.uuid4())
         #print(email, login, password)
         if not email or not login or not password:
             #print("det är här det fuckar1")
@@ -156,23 +159,23 @@ def create_app():
         try:
             with get_engine().begin() as conn:
                 res = conn.execute(
-                    text("INSERT INTO Users (email, hpassword, login) VALUES (:email, :hpw, :login)"),
-                    {"email": email, "hpw": hpw, "login": login},
+                    text("INSERT INTO Users (email, hpassword, login, id) VALUES (:email, :hpw, :login, :id)"),
+                    {"email": email, "hpw": hpw, "login": login, "id": uid},
                 )
-                uid = int(res.lastrowid)
+                #uid = int(res.lastrowid)
                 row = conn.execute(
                     text("SELECT id, email, login FROM Users WHERE id = :id"),
                     {"id": uid},
                 ).one()
         except IntegrityError:
-            #print("det är här det fuckar4")
+            print("det är här det fuckar4")
             app.logger.warning(f"Duplicate user: {email} / {login}")
             return jsonify({"error": "invalid input"}), 400
         except Exception as e:
-           # print("det är här det fuckar5")
+            print("det är här det fuckar5")
             app.logger.error(f"DB error: {e}")
             return jsonify({"error": "internal server error"}), 503
-        #print("det är här det fuckar6")
+        print(row.id + " " + row.email + " " + row.login + "178")
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
@@ -204,7 +207,7 @@ def create_app():
         #set a session variable instead of a token
         session_id = secrets.token_urlsafe(32)
         #add the session to the active sessions
-        active_sessions[session_id] = {"uid": int(row.id), "login": row.login, "email": row.email}
+        active_sessions[session_id] = {"uid": row.id, "login": row.login, "email": row.email}
         
         #token now contains the same info as before, but with the session id
         #we can then look up the session id in the active sessions to get the user info and compare it to the u.id in the token
@@ -232,6 +235,8 @@ def create_app():
             return jsonify({"error": "empty filename"}), 400
 
         fname = file.filename
+        #use secure_filename to avoid directory traversal attacks
+        did = str(uuid.uuid4())
 
         user_dir = app.config["STORAGE_DIR"] / "files" / g.user["login"]
         user_dir.mkdir(parents=True, exist_ok=True)
@@ -241,6 +246,7 @@ def create_app():
         stored_name = f"{ts}__{fname}"
         stored_path = user_dir / stored_name
         file.save(stored_path)
+        
 
         sha_hex = _sha256_file(stored_path)
         size = stored_path.stat().st_size
@@ -249,18 +255,20 @@ def create_app():
             with get_engine().begin() as conn:
                 conn.execute(
                     text("""
-                        INSERT INTO Documents (name, path, ownerid, sha256, size)
-                        VALUES (:name, :path, :ownerid, UNHEX(:sha256hex), :size)
+                        INSERT INTO Documents (name, path, ownerid, sha256, size, id)
+                        VALUES (:name, :path, :ownerid, UNHEX(:sha256hex), :size, :id)
                     """),
                     {
                         "name": final_name,
                         "path": str(stored_path),
-                        "ownerid": int(g.user["id"]),
+                        "ownerid": g.user["id"],
                         "sha256hex": sha_hex,
                         "size": int(size),
+                        "id": did,
                     },
                 )
-                did = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+                #print(final_name + " " + str(stored_path) + " " + str(g.user["id"]) + " " + sha_hex + " " + str(size) + " " + did)
+                #did = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
                 row = conn.execute(
                     text("""
                         SELECT id, name, creation, HEX(sha256) AS sha256_hex, size
@@ -270,10 +278,11 @@ def create_app():
                     {"id": did},
                 ).one()
         except Exception as e:
+            #print(e)
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         return jsonify({
-            "id": int(row.id),
+            "id": row.id,
             "name": row.name,
             "creation": row.creation.isoformat() if hasattr(row.creation, "isoformat") else str(row.creation),
             "sha256": row.sha256_hex,
@@ -286,7 +295,7 @@ def create_app():
     def list_documents():
         try:
             #print(int(g.user["id"]))
-            #print("kommer hit")
+            print("kommer hit")
             with get_engine().connect() as conn:
                 rows = conn.execute(
                     text("""
@@ -295,13 +304,13 @@ def create_app():
                         WHERE ownerid = :uid
                         ORDER BY creation DESC
                     """),
-                    {"uid": int(g.user["id"])},
+                    {"uid": g.user["id"]},
                 ).all()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         docs = [{
-            "id": int(r.id),
+            "id": r.id,
             "name": r.name,
             "creation": r.creation.isoformat() if hasattr(r.creation, "isoformat") else str(r.creation),
             "sha256": r.sha256_hex,
