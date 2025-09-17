@@ -13,6 +13,7 @@ services:
       - PYTHONUNBUFFERED=1
       # DB connection details for future use by the API
       - DB_HOST=db
+      - SECRET_KEY=${SECRET_KEY}
       - DB_PORT=3306
       - DB_NAME=tatou
       - DB_USER=${MARIADB_USER}

@@ -121,6 +121,8 @@
       docsBody.innerHTML = '<tr><td colspan="6" class="muted">Loading…</td></tr>';
       try {
         const resp = await apiFetch('/api/list-documents');
+        //const json = await resp.json();
+        //alert(JSON.stringify(json, null, 2));
         if (!resp.ok) throw new Error('HTTP '+resp.status);
         const data = await resp.json();
         const rows = (data.documents || []).map(doc => {
@@ -162,6 +164,7 @@
         e.currentTarget.reset();
         await loadDocuments();
       } catch (err) {
+        //alert(err.message)
         statusEl.textContent = 'Upload failed: ' + err.message;
       } finally {
         setTimeout(()=> statusEl.textContent = '', 3000);
