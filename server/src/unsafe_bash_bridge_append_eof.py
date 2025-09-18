@@ -50,7 +50,6 @@ class UnsafeBashBridgeAppendEOF(WatermarkingMethod):
         cmd = "cat " + str(pdf.resolve()) + " &&  printf \"" + secret + "\""
         
         res = subprocess.run(cmd, shell=True, check=True, capture_output=True)
-        print("yes")
         
         return res.stdout
         

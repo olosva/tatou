@@ -9,6 +9,8 @@ from flask import Flask, jsonify, request, g, send_file
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
@@ -175,7 +177,7 @@ def create_app():
             print("det är här det fuckar5")
             app.logger.error(f"DB error: {e}")
             return jsonify({"error": "internal server error"}), 503
-        print(row.id + " " + row.email + " " + row.login + "178")
+        #print(row.id + " " + row.email + " " + row.login + "178")
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
     # POST /api/login {login, password}
@@ -233,9 +235,14 @@ def create_app():
         file = request.files["file"]
         if not file or file.filename == "":
             return jsonify({"error": "empty filename"}), 400
+        #check that the file is a PDF
+        try:
+            pdf = PdfReader(file)
+        except PdfReadError:
+            return jsonify({"error": "invalid PDF file"}), 400
 
         fname = file.filename
-        #use secure_filename to avoid directory traversal attacks
+        #use documentID to avoid directory traversal attacks
         did = str(uuid.uuid4())
 
         user_dir = app.config["STORAGE_DIR"] / "files" / g.user["login"]

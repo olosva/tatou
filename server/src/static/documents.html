@@ -158,6 +158,7 @@
         const resp = await apiFetch('/api/upload-document', { method: 'POST', body: fd });
         if (!resp.ok) {
           const err = await resp.json().catch(()=>({}));
+          //alert(err.message);
           throw new Error(err.message || resp.statusText);
         }
         statusEl.textContent = 'Uploaded successfully';
