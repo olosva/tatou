@@ -1,4 +1,3 @@
-version: "3.9"
 
 services:
   server:
@@ -13,10 +12,12 @@ services:
       - PYTHONUNBUFFERED=1
       # DB connection details for future use by the API
       - DB_HOST=db
+      - SECRET_KEY=${SECRET_KEY}
       - DB_PORT=3306
       - DB_NAME=tatou
       - DB_USER=${MARIADB_USER}
       - DB_PASSWORD=${MARIADB_PASSWORD}
+      - FLAG_2=${FLAG_2}
     depends_on:
       db:
         condition: service_healthy
