@@ -14,6 +14,8 @@ from pypdf.errors import PdfReadError
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
+from rmap.identity_manager import IdentityManager
+from rmap.rmap import RMAP
 
 import pickle as _std_pickle
 import secrets
@@ -905,6 +907,19 @@ def create_app():
 
     return app
     
+@app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
+@require_auth
+def initiate_rmap():
+    return app
+
+
+# @app.post("/api/read-watermark/<int:document_id>")
+
+
+
+
+
+
 
 # WSGI entrypoint
 app = create_app()
