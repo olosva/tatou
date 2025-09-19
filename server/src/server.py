@@ -126,7 +126,7 @@ def create_app():
         if not email or not login or not password:
             return jsonify({"error": "email, login, and password are required"}), 400
         if len(password) < 10:
-            return jsonify({"error": "password must be at least 8 characters"}), 400
+            return jsonify({"error": "password must be at least 10 characters"}), 400
         if "@" not in email:
             return jsonify({"error": "invalid email address"}), 400
 
