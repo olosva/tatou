@@ -20,10 +20,9 @@ COPY entrypoint.sh /app/entrypoint.sh
 # Installera beroenden/projektet (PEP 660 editable)
 RUN pip install --no-cache-dir -e .
 
-# SKAPA ETT "server"-paket som pekar mot src.server
-# så att gunicorn 'server:create_app()' fungerar
+# Skapa ett "server"-paket som pekar på src.server
 RUN mkdir -p /app/server \
- && printf "from .src.server import create_app\n" > /app/server/__init__.py
+ && printf "from src.server import create_app\n" > /app/server/__init__.py
 
 # Gör entrypoint körbar och fixa ev. CRLF
 RUN chmod +x /app/entrypoint.sh && sed -i 's/\r$//' /app/entrypoint.sh
