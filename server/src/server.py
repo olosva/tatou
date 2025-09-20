@@ -238,6 +238,7 @@ def create_app():
         #check that the file is a PDF
         try:
             pdf = PdfReader(file)
+            file.seek(0)
         except PdfReadError:
             return jsonify({"error": "invalid PDF file"}), 400
 
