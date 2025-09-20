@@ -6,24 +6,28 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# Git behövs för "rmap @ git+..."
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
-# Copy project description, to instal dependencies
+# Kopiera projektfiler
 COPY pyproject.toml /app/pyproject.toml
-
-# Install runtime dependencies
-RUN pip install --no-cache-dir -e .
-
-# Copy sources after dependencies installation
 COPY src /app/src
 COPY flag /app/flag
 COPY entrypoint.sh /app/entrypoint.sh
+
+# Installera beroenden/projektet (PEP 660 editable)
 RUN pip install --no-cache-dir -e .
+
+# SKAPA ETT "server"-paket som pekar mot src.server
+# så att gunicorn 'server:create_app()' fungerar
+RUN mkdir -p /app/server \
+ && printf "from .src.server import create_app\n" > /app/server/__init__.py
+
+# Gör entrypoint körbar och fixa ev. CRLF
+RUN chmod +x /app/entrypoint.sh && sed -i 's/\r$//' /app/entrypoint.sh
 
 EXPOSE 5000
 
-# Default command runs the web server
 CMD ["./entrypoint.sh"]
-
