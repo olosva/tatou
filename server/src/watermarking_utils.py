@@ -43,7 +43,7 @@ from watermarking_method import (
 )
 from add_after_eof import AddAfterEOF
 from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
-from wm_binary_invisible import BinaryInvisibleWatermark
+#from wm_binary_invisible import BinaryInvisibleWatermark
 
 # --------------------
 # Method registry
@@ -52,7 +52,7 @@ from wm_binary_invisible import BinaryInvisibleWatermark
 METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
     UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
-    BinaryInvisibleWatermark.name: BinaryInvisibleWatermark(),
+    #BinaryInvisibleWatermark.name: BinaryInvisibleWatermark(),
 }
 """Registry of available watermarking methods.
 
