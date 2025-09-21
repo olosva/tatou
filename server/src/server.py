@@ -91,9 +91,10 @@ def create_app():
             user_data = active_sessions[session_id]
             g.user = {"id": user_data["uid"], "login": user_data["login"], "email": user_data.get("email")}
             
-            #print(g.user)
-            #print("rad 92")
+            
+            #print("kommer hit verkar bra1")
             return f(*args, **kwargs)
+        #print("kommer hit verkar bra2")
         return wrapper
 
     def _sha256_file(path: Path) -> str:
@@ -238,10 +239,10 @@ def create_app():
         #check that the file is a PDF
         try:
             pdf = PdfReader(file)
-            file.seek(0)
+            file.seek(0)  # reset file pointer after reading TACK CLAUDE
         except PdfReadError:
             return jsonify({"error": "invalid PDF file"}), 400
-
+        
         fname = file.filename
         #use documentID to avoid directory traversal attacks
         did = str(uuid.uuid4())
@@ -258,6 +259,7 @@ def create_app():
 
         sha_hex = _sha256_file(stored_path)
         size = stored_path.stat().st_size
+        print(size)
 
         try:
             with get_engine().begin() as conn:
@@ -303,7 +305,7 @@ def create_app():
     def list_documents():
         try:
             #print(int(g.user["id"]))
-            print("kommer hit")
+            #print("kommer hit")
             with get_engine().connect() as conn:
                 rows = conn.execute(
                     text("""
@@ -379,6 +381,7 @@ def create_app():
                         JOIN Versions v ON d.id = v.documentid
                         WHERE u.login = :glogin
                     """),
+                    #FIXME so that it uses the user id instead of login
                     {"glogin": str(g.user["login"])},
                 ).all()
         except Exception as e:
@@ -395,15 +398,17 @@ def create_app():
     
     # GET /api/get-document or /api/get-document/<id>  → returns the PDF (inline)
     @app.get("/api/get-document")
-    @app.get("/api/get-document/<int:document_id>")
+    @app.get("/api/get-document/<string:document_id>")
     @require_auth
-    def get_document(document_id: int | None = None):
-
+    def get_document(document_id: str | None = None):
+        
+        #print(document_id)
+        #print("kommer hit")
         # Support both path param and ?id=/ ?documentid=
         if document_id is None:
             document_id = request.args.get("id") or request.args.get("documentid")
             try:
-                document_id = int(document_id)
+                document_id = str(document_id)
             except (TypeError, ValueError):
                 return jsonify({"error": "document id required"}), 400
 
@@ -632,16 +637,17 @@ def create_app():
             return jsonify({"error": "method, intended_for, secret, and key are required"}), 400
 
         # lookup the document; enforce ownership
+        #checks that the document belongs to the user via ownerID
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
                     text("""
                         SELECT id, name, path
                         FROM Documents
-                        WHERE id = :id
+                        WHERE id = :id AND ownerid = :uid
                         LIMIT 1
                     """),
-                    {"id": doc_id},
+                    {"id": doc_id, "uid": g.user["id"]},
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503

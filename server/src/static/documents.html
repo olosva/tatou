@@ -185,7 +185,8 @@
           await loadDocuments();
         }
         if (action === 'view') {
-          const r = await apiFetch('/api/get-document/' + id);
+          const r = await apiFetch('/api/get-document/' + id, { method: 'GET' });
+          //alert(r.status);
           if (!r.ok) throw new Error('HTTP ' + r.status);
           const blob = await r.blob();
           const url = URL.createObjectURL(blob);
