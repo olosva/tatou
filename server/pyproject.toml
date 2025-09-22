@@ -11,7 +11,8 @@ dependencies = [
 	"SQLAlchemy==2.0.43",
 	"dill==0.4.0",
 	"pypdf>=4.0.0",
-	"rmap @ git+https://github.com/nharrand/RMAP-Server.git@v1.0.0"
+	"rmap @ git+https://github.com/nharrand/RMAP-Server.git@v1.0.0",
+  	"reportlab"
 ]
 
 [project.optional-dependencies]
