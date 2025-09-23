@@ -140,6 +140,7 @@ def create_app():
     # POST /api/create-user {email, login, password}
     @app.post("/api/create-user")
     def create_user():
+        print("kommer till createuser")
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip().lower()
         login = (payload.get("login") or "").strip()
@@ -186,6 +187,7 @@ def create_app():
     # POST /api/login {login, password}
     @app.post("/api/login")
     def login():
+        print("kommer till login")
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip()
         password = payload.get("password") or ""
@@ -233,6 +235,7 @@ def create_app():
     @app.post("/api/upload-document")
     @require_auth
     def upload_document():
+        print("kommer till uploaddocument")
         if "file" not in request.files:
             return jsonify({"error": "file is required (multipart/form-data)"}), 400
         file = request.files["file"]
@@ -335,6 +338,7 @@ def create_app():
     @app.get("/api/list-versions/<int:document_id>")
     @require_auth
     def list_versions(document_id: int | None = None):
+        print("kommer till listversions")
         # Support both path param and ?id=/ ?documentid=
         if document_id is None:
             document_id = request.args.get("id") or request.args.get("documentid")
@@ -404,8 +408,7 @@ def create_app():
     @require_auth
     def get_document(document_id: str | None = None):
         
-        #print(document_id)
-        #print("kommer hit")
+        print("kommer till getdocument")
         # Support both path param and ?id=/ ?documentid=
         if document_id is None:
             document_id = request.args.get("id") or request.args.get("documentid")
@@ -464,7 +467,7 @@ def create_app():
     # GET /api/get-version/<link>  → returns the watermarked PDF (inline)
     @app.get("/api/get-version/<link>")
     def get_version(link: str):
-
+        print("kommer till getversion")
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -536,6 +539,7 @@ def create_app():
     @app.route("/api/delete-document/<document_id>", methods=["DELETE"])
     @require_auth
     def delete_document(document_id: str | None = None):
+        print("kommer till deletedocument")
         # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         #print(document_id)
         if not document_id:
@@ -607,10 +611,11 @@ def create_app():
         
     # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
     @app.post("/api/create-watermark")
-    @app.post("/api/create-watermark/<int:document_id>")
+    @app.post("/api/create-watermark/<string:document_id>")
     @require_auth
-    def create_watermark(document_id: int | None = None):
+    def create_watermark(document_id: str | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on GET
+
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -618,6 +623,7 @@ def create_app():
                 or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
             )
         try:
+            print("try")
             doc_id = document_id
         except (TypeError, ValueError):
             return jsonify({"error": "document id required"}), 400
@@ -632,7 +638,7 @@ def create_app():
 
         # validate input
         try:
-            doc_id = int(doc_id)
+            doc_id = str(doc_id)
         except (TypeError, ValueError):
             return jsonify({"error": "document_id (int) is required"}), 400
         if not method or not intended_for or not isinstance(secret, str) or not isinstance(key, str):
@@ -714,15 +720,17 @@ def create_app():
 
         # link token = sha1(watermarked_file_name)
         link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
+        vid = str(uuid.uuid4())
 
         try:
             with get_engine().begin() as conn:
                 conn.execute(
                     text("""
-                        INSERT INTO Versions (documentid, link, intended_for, secret, method, position, path)
-                        VALUES (:documentid, :link, :intended_for, :secret, :method, :position, :path)
-                    """),
+                                INSERT INTO Versions (id, documentid, link, intended_for, secret, method, position, path)
+                                VALUES (:id, :documentid, :link, :intended_for, :secret, :method, :position, :path)
+                            """),
                     {
+                        "id": vid,
                         "documentid": doc_id,
                         "link": link_token,
                         "intended_for": intended_for,
@@ -732,7 +740,7 @@ def create_app():
                         "path": dest_path
                     },
                 )
-                vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+                # vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
         except Exception as e:
             # best-effort cleanup if DB insert fails
             try:
@@ -740,7 +748,6 @@ def create_app():
             except Exception:
                 pass
             return jsonify({"error": f"database error during version insert: {e}"}), 503
-
         return jsonify({
             "id": vid,
             "documentid": doc_id,
@@ -756,6 +763,7 @@ def create_app():
     @app.post("/api/load-plugin")
     @require_auth
     def load_plugin():
+        print("kommer till loadplugin")
         """
         Load a serialized Python class implementing WatermarkingMethod from
         STORAGE_DIR/files/plugins/<filename>.{pkl|dill} and register it in wm_mod.METHODS.
@@ -833,6 +841,7 @@ def create_app():
     @app.post("/api/read-watermark/<int:document_id>")
     @require_auth
     def read_watermark(document_id: int | None = None):
+        print("kommer till readwatermark")
         # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         if not document_id:
             document_id = (
@@ -907,10 +916,10 @@ def create_app():
 
     return app
     
-@app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
-@require_auth
-def initiate_rmap():
-    return app
+#@app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
+#@require_auth
+#def initiate_rmap():
+  #  return app
 
 
 # @app.post("/api/read-watermark/<int:document_id>")

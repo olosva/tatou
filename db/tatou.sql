@@ -64,8 +64,8 @@ CREATE TABLE IF NOT EXISTS `Documents` (
 
 -- Versions table (watermarked/public Versions of a document)
 CREATE TABLE IF NOT EXISTS `Versions` (
-  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  `documentid` BIGINT UNSIGNED NOT NULL,       -- FK to Documents(id)
+  `id` VARCHAR(36) NOT NULL,
+  `documentid` VARCHAR(36) NOT NULL,       -- FK to Documents(id)
   `link` VARCHAR(255) NOT NULL,                -- public token or URL slug
   `intended_for` VARCHAR(320) NULL,            -- optional email/name
   `secret` VARCHAR(320) NOT NULL,              -- secret
