@@ -137,14 +137,14 @@ def derive_key(key: str) -> tuple[bytes, bytes]:
    # print(key + salt)
     return key, salt
 
-def encrypt(plain_text: str, key: bytes) -> dict:
+def encrypt(plain_text, key):
     #key, salt = derive_key(key)
     iv = get_random_bytes(12)
     cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
     cipher_text, tag = cipher.encrypt_and_digest(plain_text.encode())
     #print("kommer in encrypt")
    # print(cipher.nonce + tag + cipher_text)
-    return cipher.nonce + tag + cipher_text
+    return cipher_text + cipher.nonce + tag
 
 def decrypt(cipher_text: bytes, key: bytes, nonce : bytes, tag: bytes) -> str:
     cipher = AES.new(key, AES.MODE_GCM, nonce)

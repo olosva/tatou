@@ -10,8 +10,8 @@ from watermarking_method import (
     PdfSource,
     load_pdf_bytes,
     is_pdf_bytes,
-    SecretNotFoundError,
-    InvalidKeyError,
+    derive_key, encrypt, decrypt
+    
 )
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -43,14 +43,50 @@ class wm_encrypted(WatermarkingMethod):
         Return a new PDF with a visible watermark and a hidden encrypted secret.
         """
         print(">> add_watermark called")
-
-       
+        
+        # Derive a 256-bit key from the provided key, we store the salt and iv in the database
+        
+        
+       # print("Derived key and salt:")
         pdf_bytes = load_pdf_bytes(pdf)
-
         stamped_pdf = self.add_visible_watermark(pdf_bytes, position, secret)
-        final_pdf = self.add_hidden_watermark(stamped_pdf, secret, key)
+        
+        key, salt = derive_key(key)
+        encrypted_secret, nonce, tag = encrypt(secret, key)
+        final_pdf = self.add_hidden_watermark(stamped_pdf, encrypted_secret)
 
         return final_pdf
+    
+    
+    def read_secret(self, pdf: PdfSource, key: str) -> str:
+        """
+        Recover the hidden secret using the provided key.
+        """
+        print(">> read_secret called")
+
+        pdf_bytes = load_pdf_bytes(pdf)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        # Scan objects for our blob
+        for xref in range(1, doc.xref_length()):
+            obj_str = doc.xref_object(xref, compressed=False)
+            if "/EmbeddedFile" in obj_str:
+                # Extract stream
+                stream = doc.xref_stream(xref)
+                blob = json.loads(stream.decode())
+
+                iv = base64.b64decode(blob["iv"])
+                ciphertext = base64.b64decode(blob["ciphertext"])
+
+                try:
+                    aesgcm = AESGCM(key.encode("utf-8").ljust(32, b"0"))
+                    secret = aesgcm.decrypt(iv, ciphertext, None)
+                    return secret.decode()
+                except Exception:
+                    raise InvalidKeyError("Invalid key or corrupted watermark")
+
+        raise SecretNotFoundError("No watermark secret found")
+
 
     def add_visible_watermark(self, pdf_bytes, position, secret):
         pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -84,58 +120,29 @@ class wm_encrypted(WatermarkingMethod):
         out = io.BytesIO()
         pdf.save(out, deflate=True)
         return out.getvalue()
-    def add_hidden_watermark(self, pdf_bytes: bytes, secret: str, key: str) -> bytes:
-        """
-        Encrypt `secret` with `key` and embed it as a hidden object in the PDF.
-        """
+    
+    def add_hidden_watermark(self, pdf_bytes, secret):
+    
+        blob_b64 = base64.b64encode(secret).decode("ascii")
+        # chunk to avoid huge single strings
+        chunk_size = 64
+        chunks = [blob_b64[i : i + chunk_size] for i in range(0, len(blob_b64), chunk_size)]
 
-        pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        page = doc[0] if doc.page_count > 0 else doc.new_page()
+        rect = page.rect
 
-        # Derive encryption key
-        aesgcm = AESGCM(key.encode("utf-8").ljust(32, b"0"))  # pad/truncate to 32 bytes
-        iv = secrets.token_bytes(12)
-
-        ciphertext = aesgcm.encrypt(iv, secret.encode("utf-8"), None)
-
-        blob = {
-            "iv": base64.b64encode(iv).decode(),
-            "ciphertext": base64.b64encode(ciphertext).decode(),
-        }
-        blob_json = json.dumps(blob).encode()
-
-        # Create a new PDF object to store the blob
-        xref = pdf.new_object()
-        pdf.update_object(xref, f"<< /Type /EmbeddedFile /Length {len(blob_json)} >>\nstream\n".encode() + blob_json + b"\nendstream")
-
+        # small font, invisible rendering mode (render_mode=3)
+        x = rect.width * 0.02
+        y0 = rect.height * 0.02
+        line_height = 7
+        fontsize = 6
+        for i, chunk in enumerate(chunks):
+            y = y0 + i * line_height
+            page.insert_text((x, y), chunk, fontsize=fontsize, fontname="helv", render_mode=3)
         out = io.BytesIO()
-        pdf.save(out, deflate=True)
+        doc.save(out, deflate=True)
+        doc.close()
         return out.getvalue()
 
-    def read_secret(self, pdf: PdfSource, key: str) -> str:
-        """
-        Recover the hidden secret using the provided key.
-        """
-        print(">> read_secret called")
-
-        pdf_bytes = load_pdf_bytes(pdf)
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-        # Scan objects for our blob
-        for xref in range(1, doc.xref_length()):
-            obj_str = doc.xref_object(xref, compressed=False)
-            if "/EmbeddedFile" in obj_str:
-                # Extract stream
-                stream = doc.xref_stream(xref)
-                blob = json.loads(stream.decode())
-
-                iv = base64.b64decode(blob["iv"])
-                ciphertext = base64.b64decode(blob["ciphertext"])
-
-                try:
-                    aesgcm = AESGCM(key.encode("utf-8").ljust(32, b"0"))
-                    secret = aesgcm.decrypt(iv, ciphertext, None)
-                    return secret.decode()
-                except Exception:
-                    raise InvalidKeyError("Invalid key or corrupted watermark")
-
-        raise SecretNotFoundError("No watermark secret found")
+    
