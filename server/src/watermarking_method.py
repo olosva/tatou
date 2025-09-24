@@ -80,7 +80,7 @@ class InvalidKeyError(WatermarkingError):
 # ----------------------------
 
 def load_pdf_bytes(src: PdfSource) -> bytes:
-    print("kommer in load pdf bytes")
+    #print("kommer in load pdf bytes")
     """Normalize a :class:`PdfSource` into raw ``bytes``.
 
     Parameters
@@ -144,12 +144,20 @@ def encrypt(plain_text, key):
     cipher_text, tag = cipher.encrypt_and_digest(plain_text.encode())
     #print("kommer in encrypt")
    # print(cipher.nonce + tag + cipher_text)
-    return cipher_text + cipher.nonce + tag
+    return cipher_text, cipher.nonce, tag
 
 def decrypt(cipher_text: bytes, key: bytes, nonce : bytes, tag: bytes) -> str:
     cipher = AES.new(key, AES.MODE_GCM, nonce)
     cipher.decrypt_and_verify()
     return cipher.decrypt_and_verify(cipher_text, tag).decode()
+
+def get_coordinates(position, page_rect):
+     h = hashlib.sha256(position.encode()).hexdigest()
+     x = (h[0] / 255) * page_rect.width / 255
+     y = (h[1] / 255) * page_rect.height / 255
+     print(x)
+     print(y)
+     return x, y 
     
 
 

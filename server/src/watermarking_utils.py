@@ -104,7 +104,13 @@ def apply_watermark(
 ) -> bytes:
     """Apply a watermark using the specified method and return new PDF bytes."""
     m = get_method(method)
-    return m.add_watermark(pdf=pdf, secret=secret, key=key, position=position)
+    return m.add_watermark(
+        pdf=pdf, 
+        secret=secret, 
+        key=key, 
+        position=position
+        
+        )
 
 def is_watermarking_applicable(
     method: str | WatermarkingMethod,

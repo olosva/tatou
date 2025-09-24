@@ -261,7 +261,7 @@ def create_app():
 
         sha_hex = _sha256_file(stored_path)
         size = stored_path.stat().st_size
-        print(size)
+        #print(size)
 
         try:
             with get_engine().begin() as conn:
@@ -684,23 +684,31 @@ def create_app():
             if applicable is False:
                 return jsonify({"error": "watermarking method not applicable"}), 400
         except Exception as e:
+            
             return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
 
         # apply watermark → bytes
         try:
-            wm_bytes: bytes = WMUtils.apply_watermark(
+            result  = WMUtils.apply_watermark(
                 pdf=str(file_path),
                 secret=secret,
                 key=key,
                 method=method,
                 position=position
             )
+            wm_bytes = result["pdf_bytes"]
+            iv = result["iv"]
+            tag = result["tag"]
+            salt = result["salt"]
+            secret = result["encrypted_secret"]
+            print("kommer hit 703")
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
                 print("kommer hit 697")
                 return jsonify({"error": "watermarking produced no output"}), 500
             
         except Exception as e:
             print(e)
+            print("kommer hit 711")
             return jsonify({"error": f"watermarking failed: {e}"}), 500
 
         # build destination file name: "<original_name>__<intended_to>.pdf"
@@ -718,8 +726,8 @@ def create_app():
                 f.write(wm_bytes)
         except Exception as e:
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
+        
         vid = str(uuid.uuid4())
-
         # link token = sha1(watermarked_file_name)
         link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
         #print(doc_id, link_token, intended_for, secret, method, position, dest_path)
@@ -727,8 +735,8 @@ def create_app():
             with get_engine().begin() as conn:
                 conn.execute(
                     text("""
-                        INSERT INTO Versions (id, documentid, link, intended_for, secret, method, position, path)
-                        VALUES (:id, :documentid, :link, :intended_for, :secret, :method, :position, :path)
+                        INSERT INTO Versions (id, documentid, link, intended_for, secret, iv, tag, salt, method, position, path)
+                        VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
                     """),
                     {
                         "id": vid,
@@ -736,6 +744,9 @@ def create_app():
                         "link": link_token,
                         "intended_for": intended_for,
                         "secret": secret,
+                        "iv": iv,
+                        "tag": tag,
+                        "salt": salt,
                         "method": method,
                         "position": position or "",
                         "path": dest_path
@@ -748,7 +759,7 @@ def create_app():
                 dest_path.unlink(missing_ok=True)
             except Exception:
                 pass
-            #print(e + " 746")
+            print("746")
             return jsonify({"error": f"database error during version insert: {e}"}), 503
 
         return jsonify({
@@ -840,9 +851,9 @@ def create_app():
         
     # POST /api/read-watermark
     @app.post("/api/read-watermark")
-    @app.post("/api/read-watermark/<int:document_id>")
+    @app.post("/api/read-watermark/<string:document_id>")
     @require_auth
-    def read_watermark(document_id: int | None = None):
+    def read_watermark(document_id: str | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         if not document_id:
             document_id = (
@@ -904,7 +915,8 @@ def create_app():
             secret = WMUtils.read_watermark(
                 method=method,
                 pdf=str(file_path),
-                key=key
+                key=key,
+                position=position
             )
         except Exception as e:
             return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
@@ -917,10 +929,10 @@ def create_app():
 
     return app
     
-@app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
-@require_auth
-def initiate_rmap():
-    return app
+#@app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
+#@require_auth
+#def initiate_rmap():
+#    return app
 
 
 # @app.post("/api/read-watermark/<int:document_id>")
