@@ -1,0 +1,141 @@
+import io
+import fitz  # PyMuPDF
+import os
+import json
+import base64
+from typing import Optional
+
+from watermarking_method import (
+    WatermarkingMethod,
+    PdfSource,
+    load_pdf_bytes,
+    is_pdf_bytes,
+    SecretNotFoundError,
+    InvalidKeyError,
+)
+
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import secrets
+
+
+class wm_encrypted(WatermarkingMethod):
+    name: str = "wm-encrypted"
+
+    @staticmethod
+    def get_usage() -> str:
+        return "Encrypted watermarking method: visible text + hidden encrypted secret"
+
+    def is_watermark_applicable(
+        self,
+        pdf: PdfSource,
+        position: Optional[str] = None,
+    ) -> bool:
+        return True
+
+    def add_watermark(
+        self,
+        pdf: PdfSource,
+        secret: str,
+        key: str,
+        position: str | None = None,
+    ) -> bytes:
+        """
+        Return a new PDF with a visible watermark and a hidden encrypted secret.
+        """
+        print(">> add_watermark called")
+
+       
+        pdf_bytes = load_pdf_bytes(pdf)
+
+        stamped_pdf = self.add_visible_watermark(pdf_bytes, position, secret)
+        final_pdf = self.add_hidden_watermark(stamped_pdf, secret, key)
+
+        return final_pdf
+
+    def add_visible_watermark(self, pdf_bytes, position, secret):
+        pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+        for page in pdf:
+            rect = page.rect
+            if position == "center":
+                x, y = rect.width / 2, rect.height / 2
+                align = 1  # center
+            elif position == "top":
+                x, y = rect.width / 2, rect.height * 0.1
+                align = 1
+            elif position == "bottom":
+                x, y = rect.width / 2, rect.height * 0.9
+                align = 1
+            else:  # fallback: center
+                x, y = rect.width / 2, rect.height / 2
+                align = 1
+
+            page.insert_text(
+                (x, y), 
+                secret, 
+                fontsize=36, 
+                rotate=45 if position == "center" else 0, 
+                color=(0.7, 0.7, 0.7),  # light gray
+                render_mode=2,  # fill + stroke
+                fontname="helv"
+                #align=align,
+                #opacity=0.3
+            )
+
+        out = io.BytesIO()
+        pdf.save(out, deflate=True)
+        return out.getvalue()
+    def add_hidden_watermark(self, pdf_bytes: bytes, secret: str, key: str) -> bytes:
+        """
+        Encrypt `secret` with `key` and embed it as a hidden object in the PDF.
+        """
+
+        pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        # Derive encryption key
+        aesgcm = AESGCM(key.encode("utf-8").ljust(32, b"0"))  # pad/truncate to 32 bytes
+        iv = secrets.token_bytes(12)
+
+        ciphertext = aesgcm.encrypt(iv, secret.encode("utf-8"), None)
+
+        blob = {
+            "iv": base64.b64encode(iv).decode(),
+            "ciphertext": base64.b64encode(ciphertext).decode(),
+        }
+        blob_json = json.dumps(blob).encode()
+
+        # Create a new PDF object to store the blob
+        xref = pdf.new_object()
+        pdf.update_object(xref, f"<< /Type /EmbeddedFile /Length {len(blob_json)} >>\nstream\n".encode() + blob_json + b"\nendstream")
+
+        out = io.BytesIO()
+        pdf.save(out, deflate=True)
+        return out.getvalue()
+
+    def read_secret(self, pdf: PdfSource, key: str) -> str:
+        """
+        Recover the hidden secret using the provided key.
+        """
+        print(">> read_secret called")
+
+        pdf_bytes = load_pdf_bytes(pdf)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        # Scan objects for our blob
+        for xref in range(1, doc.xref_length()):
+            obj_str = doc.xref_object(xref, compressed=False)
+            if "/EmbeddedFile" in obj_str:
+                # Extract stream
+                stream = doc.xref_stream(xref)
+                blob = json.loads(stream.decode())
+
+                iv = base64.b64decode(blob["iv"])
+                ciphertext = base64.b64decode(blob["ciphertext"])
+
+                try:
+                    aesgcm = AESGCM(key.encode("utf-8").ljust(32, b"0"))
+                    secret = aesgcm.decrypt(iv, ciphertext, None)
+                    return secret.decode()
+                except Exception:
+                    raise InvalidKeyError("Invalid key or corrupted watermark")
+
+        raise SecretNotFoundError("No watermark secret found")

@@ -45,6 +45,10 @@ from dataclasses import dataclass
 from typing import IO, ClassVar, TypeAlias, Union
 import io
 import os
+from Crypto.Random import get_random_bytes
+import hashlib
+from Crypto.Cipher import AES
+
 
 # ----------------------------
 # Public type aliases & errors
@@ -76,6 +80,7 @@ class InvalidKeyError(WatermarkingError):
 # ----------------------------
 
 def load_pdf_bytes(src: PdfSource) -> bytes:
+    print("kommer in load pdf bytes")
     """Normalize a :class:`PdfSource` into raw ``bytes``.
 
     Parameters
@@ -111,6 +116,8 @@ def load_pdf_bytes(src: PdfSource) -> bytes:
 
     if not is_pdf_bytes(data):
         raise ValueError("Input does not look like a valid PDF (missing %PDF header)")
+    
+    
     return data
 
 
@@ -122,6 +129,29 @@ def is_pdf_bytes(data: bytes) -> bool:
     updates, so we don't strictly require them here.
     """
     return data.startswith(b"%PDF-")
+
+def derive_key(key: str) -> tuple[bytes, bytes]:
+    salt = get_random_bytes(16)
+    key = hashlib.pbkdf2_hmac('sha256', key.encode(), salt, 100000, dklen=32)
+   # print("kommer in derive key")
+   # print(key + salt)
+    return key, salt
+
+def encrypt(plain_text: str, key: bytes) -> dict:
+    #key, salt = derive_key(key)
+    iv = get_random_bytes(12)
+    cipher = AES.new(key, AES.MODE_GCM, nonce=iv)
+    cipher_text, tag = cipher.encrypt_and_digest(plain_text.encode())
+    #print("kommer in encrypt")
+   # print(cipher.nonce + tag + cipher_text)
+    return cipher.nonce + tag + cipher_text
+
+def decrypt(cipher_text: bytes, key: bytes, nonce : bytes, tag: bytes) -> str:
+    cipher = AES.new(key, AES.MODE_GCM, nonce)
+    cipher.decrypt_and_verify()
+    return cipher.decrypt_and_verify(cipher_text, tag).decode()
+    
+
 
 
 # ---------------------------------

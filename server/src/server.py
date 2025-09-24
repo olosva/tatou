@@ -25,7 +25,7 @@ except Exception:  # dill is optional
 
 import watermarking_utils as WMUtils
 from watermarking_method import WatermarkingMethod
-#from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
+
 active_sessions = {}
 
 
@@ -605,10 +605,12 @@ def create_app():
         
     # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
     @app.post("/api/create-watermark")
-    @app.post("/api/create-watermark/<int:document_id>")
-    @require_auth
-    def create_watermark(document_id: int | None = None):
+    @app.post("/api/create-watermark/<string:document_id>")
+    @require_auth #ändrade till str
+    def create_watermark(document_id: str | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on GET
+        #print("kommer hit början")
+
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -630,7 +632,7 @@ def create_app():
 
         # validate input
         try:
-            doc_id = int(doc_id)
+            doc_id = str(doc_id)
         except (TypeError, ValueError):
             return jsonify({"error": "document_id (int) is required"}), 400
         if not method or not intended_for or not isinstance(secret, str) or not isinstance(key, str):
@@ -650,6 +652,7 @@ def create_app():
                     {"id": doc_id, "uid": g.user["id"]},
                 ).first()
         except Exception as e:
+            print("kommer hit 655")
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
@@ -670,6 +673,7 @@ def create_app():
 
         # check watermark applicability
         try:
+            #print("kommer hit 673")
             applicable = WMUtils.is_watermarking_applicable(
                 method=method,
                 pdf=str(file_path),
@@ -690,8 +694,11 @@ def create_app():
                 position=position
             )
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
+                print("kommer hit 697")
                 return jsonify({"error": "watermarking produced no output"}), 500
+            
         except Exception as e:
+            print(e)
             return jsonify({"error": f"watermarking failed: {e}"}), 500
 
         # build destination file name: "<original_name>__<intended_to>.pdf"
@@ -709,18 +716,20 @@ def create_app():
                 f.write(wm_bytes)
         except Exception as e:
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
+        vid = str(uuid.uuid4())
 
         # link token = sha1(watermarked_file_name)
         link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
-
+        #print(doc_id, link_token, intended_for, secret, method, position, dest_path)
         try:
             with get_engine().begin() as conn:
                 conn.execute(
                     text("""
-                        INSERT INTO Versions (documentid, link, intended_for, secret, method, position, path)
-                        VALUES (:documentid, :link, :intended_for, :secret, :method, :position, :path)
+                        INSERT INTO Versions (id, documentid, link, intended_for, secret, method, position, path)
+                        VALUES (:id, :documentid, :link, :intended_for, :secret, :method, :position, :path)
                     """),
                     {
+                        "id": vid,
                         "documentid": doc_id,
                         "link": link_token,
                         "intended_for": intended_for,
@@ -730,13 +739,14 @@ def create_app():
                         "path": dest_path
                     },
                 )
-                vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+                #vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
         except Exception as e:
             # best-effort cleanup if DB insert fails
             try:
                 dest_path.unlink(missing_ok=True)
             except Exception:
                 pass
+            #print(e + " 746")
             return jsonify({"error": f"database error during version insert: {e}"}), 503
 
         return jsonify({
