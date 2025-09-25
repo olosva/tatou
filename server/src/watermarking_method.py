@@ -130,8 +130,9 @@ def is_pdf_bytes(data: bytes) -> bool:
     """
     return data.startswith(b"%PDF-")
 
-def derive_key(key: str) -> tuple[bytes, bytes]:
-    salt = get_random_bytes(16)
+def derive_key(key: str, salt = None) -> tuple[bytes, bytes]:
+    if salt is None:
+        salt = get_random_bytes(16)
     key = hashlib.pbkdf2_hmac('sha256', key.encode(), salt, 100000, dklen=32)
    # print("kommer in derive key")
    # print(key + salt)
@@ -148,8 +149,8 @@ def encrypt(plain_text, key):
 
 def decrypt(cipher_text: bytes, key: bytes, nonce : bytes, tag: bytes) -> str:
     cipher = AES.new(key, AES.MODE_GCM, nonce)
-    cipher.decrypt_and_verify()
-    return cipher.decrypt_and_verify(cipher_text, tag).decode()
+    #cipher.decrypt_and_verify()
+    return cipher.decrypt_and_verify(cipher_text, tag).decode("utf-8")
 
 def get_coordinates(position, page_rect):
      h = hashlib.sha256(position.encode()).digest()

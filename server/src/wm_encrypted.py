@@ -67,89 +67,174 @@ class wm_encrypted(WatermarkingMethod):
         }
     
     
-    def read_secret(self, pdf, key, position, iv, tag, salt):
-        print("kommer in read_secret")
-        #doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        #page = doc[0] if doc.page_count > 0 else doc.new_page()
-        
+   # def read_secret(self, pdf, key, position, iv, tag, salt):
+        #print("kommer in read_secret")
+       
+        salt = base64.b64decode(salt)
+        iv = base64.b64decode(iv)
+        tag = base64.b64decode(tag)
         #x,y0 = get_coordinates(position, rect)
-        derived_key = derive_key(base64.b64decode(key), base64.b64decode(salt))
+        print(iv, tag, salt)
+        derived_key, _ = derive_key(key, salt)
         
-        doc = fitz.open(stream=pdf, filetype="pdf")
-        rect = page.rect
+        pdf_bytes = load_pdf_bytes(pdf)
+
+        
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        
     
         if doc.page_count == 0:
             raise ValueError("PDF has no pages")
 
         # Get coordinates where text was embedded
-        x, y0 = get_coordinates(position, rect)
+        x, y0 = get_coordinates(position, doc[0].rect)
         line_height = 7
 
         # Extract text from known positions
         chunks = []
-        for page in doc:
-            # Try to extract text from the area where we embedded it
-            # Create small rectangles around each expected chunk position
+        for page_num, page in enumerate(doc):
             chunk_index = 0
             while True:
                 y = y0 + chunk_index * line_height
 
-                # Create a small rectangle around expected text position
-                rect = fitz.Rect(x - 5, y - 3, x + 400, y + 10)  # Wide enough for 64-char chunk
+                # Ensure rectangle stays within page boundaries
+                rect = fitz.Rect(
+                    max(x - 5, 0),
+                    max(y - 3, 0),
+                    min(x + 400, page.rect.width),
+                    min(y + 20, page.rect.height)  # slightly taller to catch font
+                )
 
-                # Extract text from this specific area
+                # Try extracting text from the rectangle
                 try:
-                    # Try different extraction methods
                     text = page.get_textbox(rect)
+
+                    # fallback: extract text via dictionary
                     if not text.strip():
-                        # Try alternative method
                         text_dict = page.get_text("dict", clip=rect)
                         text = ""
                         for block in text_dict.get("blocks", []):
-                            if block.get("type") == 0:
+                            if block.get("type") == 0:  # text block
                                 for line in block.get("lines", []):
                                     for span in line.get("spans", []):
                                         text += span.get("text", "")
 
-                    if text.strip():
-                        # Clean up and validate chunk
-                        clean_chunk = ''.join(c for c in text if c.isalnum() or c in '+/=')
-                        if len(clean_chunk) >= 60:  # Reasonable chunk size
-                            chunks.append(clean_chunk[:64])  # Take first 64 chars
-                            chunk_index += 1
-                        else:
-                            break
-                    else:
-                        break
+                    print(f"Page {page_num}, chunk_index {chunk_index}, extracted: {repr(text)}")
 
-                except:
+                    if not text.strip():
+                        break  # No more chunks on this page
+
+                    # Clean extracted text to match base64 chars
+                    clean_chunk = ''.join(c for c in text if c.isalnum() or c in '+/=')
+
+                    # Accept chunks that are at least 50 chars (allows small extraction variance)
+                    if len(clean_chunk) >= 50:
+                        chunks.append(clean_chunk[:64])
+                        chunk_index += 1
+                    else:
+                        break  # likely no more hidden text
+
+                except Exception as e:
+                    print(f"Error reading chunk at index {chunk_index} on page {page_num}: {e}")
                     break
-                
+
         doc.close()
 
         if not chunks:
+            
             raise ValueError("No hidden chunks found at expected positions")
 
         # Reassemble base64 data
-        encrypted_data_b64 = ''.join(chunks)
+        encrypted_secret = ''.join(chunks)
 
         try:
             # Decode and decrypt
-            encrypted_secret = base64.b64decode(encrypted_data_b64)
-            salt = base64.b64decode(salt)
-            nonce = base64.b64decode(iv)
-            tag = base64.b64decode(tag)
-
-            #derived_key, _ = derive_key(user_key, salt=salt)
-            decrypted_secret = decrypt(encrypted_secret, derived_key, nonce, tag)
-
-            return decrypted_secret.decode('utf-8')
+            #encrypted_secret = base64.b64decode(encrypted_data_b64)
+            
+            
+            encrypted_secret_bytes = base64.b64decode(encrypted_secret)
+            #encrypted_secret_bytes = base64.b64decode('xbwYSY4=')
+            decrypted_secret = decrypt(encrypted_secret_bytes, derived_key, iv, tag)
+            print(decrypted_secret)
+            
+            #print(decrypted_secret)
+            return decrypted_secret
 
         except Exception as e:
             raise ValueError(f"Failed to decrypt secret: {str(e)}")
 
 
+    def read_secret(self, pdf, key, position, iv, tag, salt):
+        import base64
+        import fitz  # PyMuPDF
 
+        print("Starting read_secret")
+
+        # Decode crypto params
+        salt = base64.b64decode(salt)
+        iv = base64.b64decode(iv)
+        tag = base64.b64decode(tag)
+        derived_key, _ = derive_key(key, salt)
+
+        # Load PDF
+        pdf_bytes = load_pdf_bytes(pdf)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+
+        if doc.page_count == 0:
+            raise ValueError("PDF has no pages")
+
+        # Get coordinates where watermark was inserted
+        x, y0 = get_coordinates(position, doc[0].rect)
+        line_height = 7  # must match add_hidden_watermark
+
+        chunks = []
+
+        for page_num, page in enumerate(doc):
+            y = y0
+            while y < page.rect.height:
+                rect = fitz.Rect(
+                    max(x - 5, 0),
+                    max(y - 3, 0),
+                    min(x + 400, page.rect.width),
+                    min(y + 20, page.rect.height)
+                )
+
+                # Extract text from region
+                text_dict = page.get_text("dict", clip=rect)
+                text = "".join(
+                    span.get("text", "")
+                    for block in text_dict.get("blocks", [])
+                    if block.get("type") == 0
+                    for line in block.get("lines", [])
+                    for span in line.get("spans", [])
+                )
+
+                if not text.strip():
+                    break  # stop when no more text found at this Y
+
+                # Keep only base64-valid chars
+                clean_chunk = ''.join(c for c in text if c.isalnum() or c in '+/=')
+
+                if clean_chunk:
+                    chunks.append(clean_chunk)
+                    print(f"Page {page_num}, y={y}, extracted: {clean_chunk}")
+
+                y += line_height  # move down to next expected chunk line
+
+        doc.close()
+
+        if not chunks:
+            raise ValueError("No hidden chunks found at expected positions")
+
+        # TODO compare each chunk so that the secret is the same on all pages?
+        encrypted_secret_b64 = chunks[0]
+        try:
+            encrypted_secret_bytes = base64.b64decode(encrypted_secret_b64)
+            decrypted_secret = decrypt(encrypted_secret_bytes, derived_key, iv, tag)
+            #print("Decrypted secret:", decrypted_secret)
+            return decrypted_secret
+        except Exception as e:
+            raise ValueError(f"Failed to decrypt secret: {e}")
         
 
 
@@ -178,10 +263,11 @@ class wm_encrypted(WatermarkingMethod):
                 rotate=45 if position == "center" else 0, 
                 color=(0.7, 0.7, 0.7),  # light gray
                 render_mode=2,  # fill + stroke
-                fontname="helv"
+                fontname="helv",
                 #align=align,
                 #opacity=0.3
             )
+            #print(x, y)
 
         out = io.BytesIO()
         pdf.save(out, deflate=True)
@@ -208,6 +294,7 @@ class wm_encrypted(WatermarkingMethod):
             for i, chunk in enumerate(chunks):
                 y = y0 + i * line_height
                 page.insert_text((x, y), chunk, fontsize=fontsize, fontname="helv", render_mode=3)
+                print(x, y)
         out = io.BytesIO()
         doc.save(out, deflate=True)
         doc.close()
