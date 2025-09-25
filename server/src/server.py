@@ -672,34 +672,32 @@ def create_app():
         try:
             file_path.relative_to(storage_root)
         except ValueError:
+            print("e1")
             return jsonify({"error": "document path invalid"}), 500
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
 
         # check watermark applicability
         try:
-            applicable = WMUtils.is_watermarking_applicable(
-                method=method,
-                pdf=str(file_path),
-                position=position
-            )
-            if applicable is False:
-                return jsonify({"error": "watermarking method not applicable"}), 400
-        except Exception as e:
-            return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
-
-        # apply watermark → bytes
-        try:
-            wm_bytes: bytes = WMUtils.apply_watermark(
+            result = WMUtils.apply_watermark(
                 pdf=str(file_path),
                 secret=secret,
                 key=key,
                 method=method,
                 position=position
             )
+            wm_bytes = result["pdf_bytes"]
+            iv = result.get("nonce")
+            tag = result.get("tag")
+            salt = result.get("salt")
+            secret = result.get("secret")
+
+            # print("kommer hit 703")
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
+                print("e1")
                 return jsonify({"error": "watermarking produced no output"}), 500
         except Exception as e:
+            print("e2", e)
             return jsonify({"error": f"watermarking failed: {e}"}), 500
 
         # build destination file name: "<original_name>__<intended_to>.pdf"
@@ -716,25 +714,29 @@ def create_app():
             with dest_path.open("wb") as f:
                 f.write(wm_bytes)
         except Exception as e:
+            print("e3", e)
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
 
         # link token = sha1(watermarked_file_name)
         link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
         vid = str(uuid.uuid4())
-
+        print(vid, doc_id, link_token, intended_for, secret, iv, tag, salt, method, position, dest_path)
         try:
             with get_engine().begin() as conn:
                 conn.execute(
                     text("""
-                                INSERT INTO Versions (id, documentid, link, intended_for, secret, method, position, path)
-                                VALUES (:id, :documentid, :link, :intended_for, :secret, :method, :position, :path)
-                            """),
+                        INSERT INTO Versions (id, documentid, link, intended_for, secret, iv, tag, salt, method, position, path)
+                        VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
+                    """),
                     {
                         "id": vid,
                         "documentid": doc_id,
                         "link": link_token,
                         "intended_for": intended_for,
                         "secret": secret,
+                        "iv": iv,
+                        "tag": tag,
+                        "salt": salt,
                         "method": method,
                         "position": position or "",
                         "path": dest_path
@@ -747,6 +749,7 @@ def create_app():
                 dest_path.unlink(missing_ok=True)
             except Exception:
                 pass
+            print(e)
             return jsonify({"error": f"database error during version insert: {e}"}), 503
         return jsonify({
             "id": vid,
@@ -838,20 +841,19 @@ def create_app():
         
     # POST /api/read-watermark
     @app.post("/api/read-watermark")
-    @app.post("/api/read-watermark/<int:document_id>")
+    @app.post("/api/read-watermark/<string:document_id>")
     @require_auth
-    def read_watermark(document_id: int | None = None):
-        print("kommer till readwatermark")
-        # accept id from path, query (?id= / ?documentid=), or JSON body on POST
+    def read_watermark(document_id: str | None = None):
         if not document_id:
             document_id = (
-                request.args.get("id")
-                or request.args.get("documentid")
-                or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
+                    request.args.get("id")
+                    or request.args.get("documentid")
+                    or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
             )
         try:
             doc_id = document_id
         except (TypeError, ValueError):
+            print("945")
             return jsonify({"error": "document id required"}), 400
 
         payload = request.get_json(silent=True) or {}
@@ -859,10 +861,11 @@ def create_app():
         method = payload.get("method")
         position = payload.get("position") or None
         key = payload.get("key")
+        print(method, position, key)
 
         # validate input
         try:
-            doc_id = int(doc_id)
+            doc_id = str(doc_id)
         except (TypeError, ValueError):
             return jsonify({"error": "document_id (int) is required"}), 400
         if not method or not isinstance(key, str):
@@ -873,19 +876,22 @@ def create_app():
             with get_engine().connect() as conn:
                 row = conn.execute(
                     text("""
-                        SELECT id, name, path
-                        FROM Documents
-                        WHERE id = :id
-                    """),
-                    {"id": doc_id},
+                                SELECT v.documentid, v.path, v.method, v.salt, v.tag, v.iv
+                                FROM Versions v
+                                JOIN Documents d ON v.documentid = d.id
+                                WHERE v.documentid = :id AND d.ownerid = :uid
+                                LIMIT 1
+                            """),
+                    {"id": doc_id, "uid": g.user["id"]},
                 ).first()
         except Exception as e:
+            print("977")
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
             return jsonify({"error": "document not found"}), 404
 
-        # resolve path safely under STORAGE_DIR
+            # resolve path safely under STORAGE_DIR
         storage_root = Path(app.config["STORAGE_DIR"]).resolve()
         file_path = Path(row.path)
         if not file_path.is_absolute():
@@ -898,14 +904,21 @@ def create_app():
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
 
+        # get the parameters from the document needed to read the watermark
+
         secret = None
         try:
             secret = WMUtils.read_watermark(
                 method=method,
                 pdf=str(file_path),
-                key=key
+                key=key,
+                position=position,
+                iv=row.iv,
+                tag=row.tag,
+                salt=row.salt
             )
         except Exception as e:
+            # print(e)
             return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
         return jsonify({
             "documentid": doc_id,

@@ -47,11 +47,12 @@ class MetadataEmbedding(WatermarkingMethod):
     ) -> str:
         """Create a consistent metadata key to store the secret."""
         hashed_key = hashlib.sha256(key.encode()).hexdigest()
+        print(f"[compute_metadata_key] Using key '{key}' → Metadata key: {hashed_key[:16]}")
         return f"/WM_{hashed_key[:16]}"  # PDF metadata keys must start with "/"
 
     def add_watermark(
         self,
-        pdf,
+        pdf: PdfSource,
         secret: str,
         key: str,
         position: str | None = None,
@@ -64,6 +65,7 @@ class MetadataEmbedding(WatermarkingMethod):
 
             # Generate a unique key for storing the secret
             metadata_key = self.compute_metadata_key(key)
+            print("Key in add", metadata_key)
 
             # Combine the secret and position into a JSON string
             embedded_data = {
@@ -72,6 +74,9 @@ class MetadataEmbedding(WatermarkingMethod):
             }
             encoded = base64.b64encode(json.dumps(embedded_data).encode()).decode()
 
+            print(f"[add_watermark] Writing to metadata key: {metadata_key}")
+            print(f"[add_watermark] Encoded watermark: {encoded}")
+
             # Store in metadata
             metadata[metadata_key] = encoded
 
@@ -79,7 +84,9 @@ class MetadataEmbedding(WatermarkingMethod):
             output = io.BytesIO()
             pdf_obj.save(output)
 
-        return output.getvalue()
+        print("[add_watermark] Watermark successfully embedded.")
+        pdf_bytes = output.getvalue()
+        return {"pdf_bytes": pdf_bytes, "secret": secret}
 
     def read_secret(
             self,
@@ -90,7 +97,10 @@ class MetadataEmbedding(WatermarkingMethod):
 
         with pikepdf.open(io.BytesIO(data)) as pdf_obj:
             metadata = pdf_obj.docinfo
-            metadata_key = self._compute_metadata_key(key)
+            metadata_key = self.compute_metadata_key(key)
+
+            print(f"[read_secret] Looking for metadata key: {metadata_key}")
+            print(f"[read_secret] Available metadata keys: {list(metadata.keys())}")
 
             if metadata_key not in metadata:
                 raise SecretNotFoundError("No watermark metadata found.")
@@ -102,8 +112,6 @@ class MetadataEmbedding(WatermarkingMethod):
                 return parsed.get("secret", "")
             except Exception as e:
                 raise InvalidKeyError("Failed to decode watermark: " + str(e))
-
-
 
 
 
