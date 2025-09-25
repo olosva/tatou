@@ -63,23 +63,23 @@ CREATE TABLE IF NOT EXISTS `Documents` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Versions table (watermarked/public Versions of a document)
-CREATE TABLE IF NOT EXISTS Versions (
-  id VARCHAR(36) NOT NULL,
-  documentid VARCHAR(36) NOT NULL,       -- FK to Documents(id)
-  link VARCHAR(255) NOT NULL,                -- public token or URL slug
-  intended_for VARCHAR(320) NULL,            -- optional email/name
-  secret VARCHAR(320) NOT NULL,
-  iv VARCHAR(24) NULL,
-  tag VARCHAR(24) NULL,
-  salt VARCHAR(24) NULL,             -- secret
-  method VARCHAR(32) NOT NULL,               -- e.g., "text_overlay"
-  position TEXT,               -- e.g., "text_overlay"
-  path VARCHAR(320) NOT NULL,              -- secret
-  PRIMARY KEY (id),
-  UNIQUE KEY uq_Versions_link (link),
-  KEY ix_Versions_documentid (documentid),
-  CONSTRAINT fk_Versions_document
-    FOREIGN KEY (documentid) REFERENCES Documents(id)
+CREATE TABLE IF NOT EXISTS `Versions` (
+  `id` VARCHAR(36) NOT NULL,
+  `documentid` VARCHAR(36) NOT NULL,       -- FK to Documents(id)
+  `link` VARCHAR(255) NOT NULL,                -- public token or URL slug
+  `intended_for` VARCHAR(320) NULL,            -- optional email/name
+  `secret` VARCHAR(320) NOT NULL,
+  `iv` VARCHAR(24) NULL,
+  `tag` VARCHAR(24) NULL,
+  `salt` VARCHAR(24) NULL,             -- secret
+  `method` VARCHAR(32) NOT NULL,               -- e.g., "text_overlay"
+  `position` TEXT,               -- e.g., "text_overlay"
+  `path` VARCHAR(320) NOT NULL,              -- secret
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uq_Versions_link` (`link`),
+  KEY `ix_Versions_documentid` (`documentid`),
+  CONSTRAINT `fk_Versions_document`
+    FOREIGN KEY (`documentid`) REFERENCES `Documents`(`id`)
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

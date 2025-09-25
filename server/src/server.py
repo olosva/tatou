@@ -27,7 +27,7 @@ except Exception:  # dill is optional
 
 import watermarking_utils as WMUtils
 from watermarking_method import WatermarkingMethod
-#from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
+from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
 active_sessions = {}
 
 
@@ -140,7 +140,6 @@ def create_app():
     # POST /api/create-user {email, login, password}
     @app.post("/api/create-user")
     def create_user():
-        print("kommer till createuser")
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip().lower()
         login = (payload.get("login") or "").strip()
@@ -187,7 +186,6 @@ def create_app():
     # POST /api/login {login, password}
     @app.post("/api/login")
     def login():
-        print("kommer till login")
         payload = request.get_json(silent=True) or {}
         email = (payload.get("email") or "").strip()
         password = payload.get("password") or ""
@@ -235,7 +233,6 @@ def create_app():
     @app.post("/api/upload-document")
     @require_auth
     def upload_document():
-        print("kommer till uploaddocument")
         if "file" not in request.files:
             return jsonify({"error": "file is required (multipart/form-data)"}), 400
         file = request.files["file"]
@@ -264,7 +261,7 @@ def create_app():
 
         sha_hex = _sha256_file(stored_path)
         size = stored_path.stat().st_size
-        print(size)
+
 
         try:
             with get_engine().begin() as conn:
@@ -335,15 +332,14 @@ def create_app():
     
     #GET /api/list-versions
     @app.get("/api/list-versions")
-    @app.get("/api/list-versions/<int:document_id>")
+    @app.get("/api/list-versions/<string:document_id>")
     @require_auth
-    def list_versions(document_id: int | None = None):
-        print("kommer till listversions")
+    def list_versions(document_id: str | None = None):
         # Support both path param and ?id=/ ?documentid=
         if document_id is None:
             document_id = request.args.get("id") or request.args.get("documentid")
             try:
-                document_id = int(document_id)
+                document_id = str(document_id)
             except (TypeError, ValueError):
                 return jsonify({"error": "document id required"}), 400
 
@@ -408,7 +404,8 @@ def create_app():
     @require_auth
     def get_document(document_id: str | None = None):
         
-        print("kommer till getdocument")
+        #print(document_id)
+        #print("kommer hit")
         # Support both path param and ?id=/ ?documentid=
         if document_id is None:
             document_id = request.args.get("id") or request.args.get("documentid")
@@ -467,7 +464,6 @@ def create_app():
     # GET /api/get-version/<link>  → returns the watermarked PDF (inline)
     @app.get("/api/get-version/<link>")
     def get_version(link: str):
-        print("kommer till getversion")
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -539,7 +535,6 @@ def create_app():
     @app.route("/api/delete-document/<document_id>", methods=["DELETE"])
     @require_auth
     def delete_document(document_id: str | None = None):
-        print("kommer till deletedocument")
         # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         #print(document_id)
         if not document_id:
@@ -612,10 +607,9 @@ def create_app():
     # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
     @app.post("/api/create-watermark")
     @app.post("/api/create-watermark/<string:document_id>")
-    @require_auth
+    @require_auth #ändrade till str
     def create_watermark(document_id: str | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on GET
-
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -623,7 +617,6 @@ def create_app():
                 or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
             )
         try:
-            print("try")
             doc_id = document_id
         except (TypeError, ValueError):
             return jsonify({"error": "document id required"}), 400
@@ -672,12 +665,25 @@ def create_app():
         try:
             file_path.relative_to(storage_root)
         except ValueError:
-            print("e1")
             return jsonify({"error": "document path invalid"}), 500
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
 
         # check watermark applicability
+        try:
+            #print("kommer hit 673")
+            applicable = WMUtils.is_watermarking_applicable(
+                method=method,
+                pdf=str(file_path),
+                position=position
+            )
+            if applicable is False:
+                return jsonify({"error": "watermarking method not applicable"}), 400
+        except Exception as e:
+
+            return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
+
+        # apply watermark → bytes
         try:
             result = WMUtils.apply_watermark(
                 pdf=str(file_path),
@@ -690,14 +696,12 @@ def create_app():
             iv = result.get("nonce")
             tag = result.get("tag")
             salt = result.get("salt")
-            secret = result.get("secret")
+            secret = result.get("encrypted_secret")
 
-            # print("kommer hit 703")
+            #print("kommer hit 703")
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
-                print("e1")
                 return jsonify({"error": "watermarking produced no output"}), 500
         except Exception as e:
-            print("e2", e)
             return jsonify({"error": f"watermarking failed: {e}"}), 500
 
         # build destination file name: "<original_name>__<intended_to>.pdf"
@@ -714,13 +718,11 @@ def create_app():
             with dest_path.open("wb") as f:
                 f.write(wm_bytes)
         except Exception as e:
-            print("e3", e)
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
 
         # link token = sha1(watermarked_file_name)
         link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
         vid = str(uuid.uuid4())
-        print(vid, doc_id, link_token, intended_for, secret, iv, tag, salt, method, position, dest_path)
         try:
             with get_engine().begin() as conn:
                 conn.execute(
@@ -729,28 +731,24 @@ def create_app():
                         VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
                     """),
                     {
-                        "id": vid,
                         "documentid": doc_id,
                         "link": link_token,
                         "intended_for": intended_for,
                         "secret": secret,
-                        "iv": iv,
-                        "tag": tag,
-                        "salt": salt,
                         "method": method,
                         "position": position or "",
                         "path": dest_path
                     },
                 )
-                # vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+                #vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
         except Exception as e:
             # best-effort cleanup if DB insert fails
             try:
                 dest_path.unlink(missing_ok=True)
             except Exception:
                 pass
-            print(e)
             return jsonify({"error": f"database error during version insert: {e}"}), 503
+
         return jsonify({
             "id": vid,
             "documentid": doc_id,
@@ -766,7 +764,6 @@ def create_app():
     @app.post("/api/load-plugin")
     @require_auth
     def load_plugin():
-        print("kommer till loadplugin")
         """
         Load a serialized Python class implementing WatermarkingMethod from
         STORAGE_DIR/files/plugins/<filename>.{pkl|dill} and register it in wm_mod.METHODS.
@@ -844,17 +841,15 @@ def create_app():
     @app.post("/api/read-watermark/<string:document_id>")
     @require_auth
     def read_watermark(document_id: str | None = None):
-        print("read_watermark")
         if not document_id:
             document_id = (
-                    request.args.get("id")
-                    or request.args.get("documentid")
-                    or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
+                request.args.get("id")
+                or request.args.get("documentid")
+                or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
             )
         try:
             doc_id = document_id
         except (TypeError, ValueError):
-            print("945")
             return jsonify({"error": "document id required"}), 400
 
         payload = request.get_json(silent=True) or {}
@@ -862,16 +857,13 @@ def create_app():
         method = payload.get("method")
         position = payload.get("position") or None
         key = payload.get("key")
-        print(method, position, key)
 
         # validate input
         try:
             doc_id = str(doc_id)
         except (TypeError, ValueError):
-            print("r1")
             return jsonify({"error": "document_id (int) is required"}), 400
         if not method or not isinstance(key, str):
-            print("r2")
             return jsonify({"error": "method, and key are required"}), 400
 
         # lookup the document; FIXME enforce ownership
@@ -879,16 +871,15 @@ def create_app():
             with get_engine().connect() as conn:
                 row = conn.execute(
                     text("""
-                                SELECT v.documentid, v.path, v.method, v.salt, v.tag, v.iv
-                                FROM Versions v
-                                JOIN Documents d ON v.documentid = d.id
-                                WHERE v.documentid = :id AND d.ownerid = :uid
-                                LIMIT 1
-                            """),
+                        SELECT v.documentid, v.path, v.method, v.salt, v.tag, v.iv
+                        FROM Versions v
+                        JOIN Documents d ON v.documentid = d.id
+                        WHERE v.documentid = :id AND d.ownerid = :uid
+                        LIMIT 1
+                    """),
                     {"id": doc_id, "uid": g.user["id"]},
                 ).first()
         except Exception as e:
-            print("977")
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
@@ -907,7 +898,7 @@ def create_app():
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
 
-        # get the parameters from the document needed to read the watermark
+        #get the parameters from the document needed to read the watermark
 
         secret = None
         try:
@@ -921,7 +912,6 @@ def create_app():
                 #salt=row.salt
             )
         except Exception as e:
-            print("r3", e)
             return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
         return jsonify({
             "documentid": doc_id,

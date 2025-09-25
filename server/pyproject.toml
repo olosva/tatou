@@ -13,7 +13,9 @@ dependencies = [
 	"pypdf>=4.0.0",
 	"rmap @ git+https://github.com/nharrand/RMAP-Server.git@v1.0.0",
   	"reportlab",
-	"pikepdf"
+	"pikepdf",
+	"pymupdf",
+	"PyCryptodome"
 ]
 
 [project.optional-dependencies]

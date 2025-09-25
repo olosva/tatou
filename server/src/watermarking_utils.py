@@ -44,6 +44,10 @@ from watermarking_method import (
 from add_after_eof import AddAfterEOF
 from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
 from metadata_embedding import MetadataEmbedding
+from wm_visible_stamp_gs import VisibleStampGS
+#from wm_encrypted import wm_encrypted
+
+
 #from wm_binary_invisible import BinaryInvisibleWatermark
 
 # --------------------
@@ -54,6 +58,8 @@ METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
     UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
     MetadataEmbedding.name: MetadataEmbedding(),
+    VisibleStampGS.name: VisibleStampGS(),
+    #wm_encrypted.name: wm_encrypted(),
     #BinaryInvisibleWatermark.name: BinaryInvisibleWatermark(),
 }
 """Registry of available watermarking methods.
