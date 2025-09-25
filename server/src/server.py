@@ -844,6 +844,7 @@ def create_app():
     @app.post("/api/read-watermark/<string:document_id>")
     @require_auth
     def read_watermark(document_id: str | None = None):
+        print("read_watermark")
         if not document_id:
             document_id = (
                     request.args.get("id")
@@ -867,8 +868,10 @@ def create_app():
         try:
             doc_id = str(doc_id)
         except (TypeError, ValueError):
+            print("r1")
             return jsonify({"error": "document_id (int) is required"}), 400
         if not method or not isinstance(key, str):
+            print("r2")
             return jsonify({"error": "method, and key are required"}), 400
 
         # lookup the document; FIXME enforce ownership
@@ -912,13 +915,13 @@ def create_app():
                 method=method,
                 pdf=str(file_path),
                 key=key,
-                position=position,
-                iv=row.iv,
-                tag=row.tag,
-                salt=row.salt
+                #position=position,
+                #iv=row.iv,
+                #tag=row.tag,
+                #salt=row.salt
             )
         except Exception as e:
-            # print(e)
+            print("r3", e)
             return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
         return jsonify({
             "documentid": doc_id,
