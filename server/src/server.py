@@ -651,6 +651,7 @@ def create_app():
                     {"id": doc_id, "uid": g.user["id"]},
                 ).first()
         except Exception as e:
+            print("e1", e)
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
@@ -680,7 +681,6 @@ def create_app():
             if applicable is False:
                 return jsonify({"error": "watermarking method not applicable"}), 400
         except Exception as e:
-
             return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
 
         # apply watermark → bytes
@@ -696,7 +696,7 @@ def create_app():
             iv = result.get("nonce")
             tag = result.get("tag")
             salt = result.get("salt")
-            secret = result.get("encrypted_secret")
+            secret = result.get("secret")
 
             #print("kommer hit 703")
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
@@ -727,26 +727,31 @@ def create_app():
             with get_engine().begin() as conn:
                 conn.execute(
                     text("""
-                        INSERT INTO Versions (id, documentid, link, intended_for, secret, iv, tag, salt, method, position, path)
-                        VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
-                    """),
+                                INSERT INTO Versions (id, documentid, link, intended_for, secret, iv, tag, salt, method, position, path)
+                                VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
+                            """),
                     {
+                        "id": vid,
                         "documentid": doc_id,
                         "link": link_token,
                         "intended_for": intended_for,
                         "secret": secret,
+                        "iv": iv,
+                        "tag": tag,
+                        "salt": salt,
                         "method": method,
                         "position": position or "",
                         "path": dest_path
                     },
                 )
-                #vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+                # vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
         except Exception as e:
             # best-effort cleanup if DB insert fails
             try:
                 dest_path.unlink(missing_ok=True)
             except Exception:
                 pass
+            print(e)
             return jsonify({"error": f"database error during version insert: {e}"}), 503
 
         return jsonify({
