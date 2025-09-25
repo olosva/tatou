@@ -689,7 +689,7 @@ def create_app():
 
         # apply watermark → bytes
         try:
-            result  = WMUtils.apply_watermark(
+            result = WMUtils.apply_watermark(
                 pdf=str(file_path),
                 secret=secret,
                 key=key,
@@ -697,11 +697,12 @@ def create_app():
                 position=position
             )
             wm_bytes = result["pdf_bytes"]
-            iv = result["iv"]
-            tag = result["tag"]
-            salt = result["salt"]
-            secret = result["encrypted_secret"]
-            print("kommer hit 703")
+            iv = result.get("nonce")
+            tag = result.get("tag")
+            salt = result.get("salt")
+            secret = result.get("encrypted_secret")
+            
+            #print("kommer hit 703")
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
                 print("kommer hit 697")
                 return jsonify({"error": "watermarking produced no output"}), 500
@@ -854,7 +855,84 @@ def create_app():
     @app.post("/api/read-watermark/<string:document_id>")
     @require_auth
     def read_watermark(document_id: str | None = None):
-        # accept id from path, query (?id= / ?documentid=), or JSON body on POST
+    #    # accept id from path, query (?id= / ?documentid=), or JSON body on POST
+    #    if not document_id:
+    #        document_id = (
+    #            request.args.get("id")
+    #            or request.args.get("documentid")
+    #            or (request.is_json and (request.get_json(silent=True) or {}).get("id"))
+    #        )
+    #    try:
+    #        doc_id = document_id
+    #    except (TypeError, ValueError):
+    #        return jsonify({"error": "document id required"}), 400
+#
+    #    payload = request.get_json(silent=True) or {}
+    #    # allow a couple of aliases for convenience
+    #    method = payload.get("method")
+    #    position = payload.get("position") or None
+    #    key = payload.get("key")
+#
+    #    # validate input
+    #    try:
+    #        doc_id = int(doc_id)
+    #    except (TypeError, ValueError):
+    #        return jsonify({"error": "document_id (int) is required"}), 400
+    #    if not method or not isinstance(key, str):
+    #        return jsonify({"error": "method, and key are required"}), 400
+#
+    #    # lookup the document; FIXME enforce ownership
+    #    try:
+    #        with get_engine().connect() as conn:
+    #            row = conn.execute(
+    #                text("""
+    #                    SELECT id, name, path,
+    #                    FROM Documents
+    #                    WHERE id = :id AND ownerid = :uid
+    #                    LIMIT 1
+    #                """),
+    #                {"id": doc_id, "uid": g.user["id"]},
+    #            ).first()
+    #    except Exception as e:
+    #        return jsonify({"error": f"database error: {str(e)}"}), 503
+#
+    #    if not row:
+    #        return jsonify({"error": "document not found"}), 404
+#
+    #    # resolve path safely under STORAGE_DIR
+    #    storage_root = Path(app.config["STORAGE_DIR"]).resolve()
+    #    file_path = Path(row.path)
+    #    if not file_path.is_absolute():
+    #        file_path = storage_root / file_path
+    #    file_path = file_path.resolve()
+    #    try:
+    #        file_path.relative_to(storage_root)
+    #    except ValueError:
+    #        return jsonify({"error": "document path invalid"}), 500
+    #    if not file_path.exists():
+    #        return jsonify({"error": "file missing on disk"}), 410
+    #    
+    #    #get the parameters from the document needed to read the watermark
+#
+    #    secret = None
+    #    try:
+    #        secret = WMUtils.read_watermark(
+    #            method=method,
+    #            pdf=str(file_path),
+    #            key=key,
+    #            position=position
+    #        )
+    #    except Exception as e:
+    #        return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
+    #    return jsonify({
+    #        "documentid": doc_id,
+    #        "secret": secret,
+    #        "method": method,
+    #        "position": position
+    #    }), 201
+#
+    #return app
+     # accept id from path, query (?id= / ?documentid=), or JSON body on POST
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -864,6 +942,7 @@ def create_app():
         try:
             doc_id = document_id
         except (TypeError, ValueError):
+            print("945")
             return jsonify({"error": "document id required"}), 400
 
         payload = request.get_json(silent=True) or {}
@@ -871,10 +950,11 @@ def create_app():
         method = payload.get("method")
         position = payload.get("position") or None
         key = payload.get("key")
+        print(method, position, key)
 
         # validate input
         try:
-            doc_id = int(doc_id)
+            doc_id = str(doc_id)
         except (TypeError, ValueError):
             return jsonify({"error": "document_id (int) is required"}), 400
         if not method or not isinstance(key, str):
@@ -885,13 +965,16 @@ def create_app():
             with get_engine().connect() as conn:
                 row = conn.execute(
                     text("""
-                        SELECT id, name, path
-                        FROM Documents
-                        WHERE id = :id
+                        SELECT v.documentid, v.path, v.method, v.salt, v.tag, v.iv
+                        FROM Versions v
+                        JOIN Documents d ON v.documentid = d.id
+                        WHERE v.documentid = :id AND d.ownerid = :uid
+                        LIMIT 1
                     """),
-                    {"id": doc_id},
+                    {"id": doc_id, "uid": g.user["id"]},
                 ).first()
         except Exception as e:
+            print("977")
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
@@ -909,6 +992,8 @@ def create_app():
             return jsonify({"error": "document path invalid"}), 500
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
+        
+        #get the parameters from the document needed to read the watermark
 
         secret = None
         try:
@@ -916,9 +1001,13 @@ def create_app():
                 method=method,
                 pdf=str(file_path),
                 key=key,
-                position=position
+                position=position,
+                iv=row.iv,
+                tag=row.tag,
+                salt=row.salt
             )
         except Exception as e:
+            print(e)
             return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
         return jsonify({
             "documentid": doc_id,

@@ -152,11 +152,9 @@ def decrypt(cipher_text: bytes, key: bytes, nonce : bytes, tag: bytes) -> str:
     return cipher.decrypt_and_verify(cipher_text, tag).decode()
 
 def get_coordinates(position, page_rect):
-     h = hashlib.sha256(position.encode()).hexdigest()
+     h = hashlib.sha256(position.encode()).digest()
      x = (h[0] / 255) * page_rect.width / 255
      y = (h[1] / 255) * page_rect.height / 255
-     print(x)
-     print(y)
      return x, y 
     
 

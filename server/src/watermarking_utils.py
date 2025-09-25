@@ -122,10 +122,19 @@ def is_watermarking_applicable(
     return m.is_watermark_applicable(pdf=pdf, position=position)
 
 
-def read_watermark(method: str | WatermarkingMethod, pdf: PdfSource, key: str) -> str:
+def read_watermark(
+    method: str | WatermarkingMethod,
+    pdf: PdfSource,
+    key: str,
+    position: str | None = None,
+    iv: str | None = None,
+    tag: str | None = None,
+    salt: str | None = None
+) -> str:
+    
     """Recover a secret from ``pdf`` using the specified method."""
     m = get_method(method)
-    return m.read_secret(pdf=pdf, key=key)
+    return m.read_secret(pdf=pdf, key=key, position=position, iv=iv, tag=tag, salt=salt)
 
 
 # --------------------
