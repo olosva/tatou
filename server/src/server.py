@@ -911,10 +911,10 @@ def create_app():
                 method=method,
                 pdf=str(file_path),
                 key=key,
-                #position=position,
-                #iv=row.iv,
-                #tag=row.tag,
-                #salt=row.salt
+                position=position,
+                iv=row.iv,
+                tag=row.tag,
+                salt=row.salt
             )
         except Exception as e:
             return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400

@@ -63,7 +63,7 @@ class wm_encrypted(WatermarkingMethod):
             "salt": base64.b64encode(salt).decode("ascii"),
             "nonce": base64.b64encode(nonce).decode("ascii"),
             "tag": base64.b64encode(tag).decode("ascii"),
-            "encrypted_secret": base64.b64encode(encrypted_secret).decode("ascii")
+            "secret": base64.b64encode(encrypted_secret).decode("ascii")
         }
     
     

@@ -83,7 +83,11 @@ class MetadataEmbedding(WatermarkingMethod):
     def read_secret(
             self,
             pdf: PdfSource,
-            key: str
+            key: str,
+            position = None,
+            iv = None,
+            tag = None,
+            salt = None
     ) -> str:
         """Read the secret from metadata using the given key."""
         data = load_pdf_bytes(pdf)
