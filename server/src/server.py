@@ -371,8 +371,8 @@ def create_app():
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         versions = [{
-            "id": int(r.id),
-            "documentid": int(r.documentid),
+            "id": str(r.id),
+            "documentid": str(r.documentid),
             "link": r.link,
             "intended_for": r.intended_for,
             "secret": r.secret,
