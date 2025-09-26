@@ -13,6 +13,8 @@ RUN apt-get update \
 COPY pyproject.toml /app/pyproject.toml
 COPY src /app/src
 COPY flag /app/flag
+COPY pki /app/server/pki
+COPY server_private_key /app/server/server_private_key
 COPY entrypoint.sh /app/entrypoint.sh
 
 RUN pip install --no-cache-dir -e .

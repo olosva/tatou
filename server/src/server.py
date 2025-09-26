@@ -44,14 +44,22 @@ def create_app():
     app.config["DB_HOST"] = os.environ.get("DB_HOST", "db")
     app.config["DB_PORT"] = int(os.environ.get("DB_PORT", "3306"))
     app.config["DB_NAME"] = os.environ.get("DB_NAME", "tatou")
-
     app.config["STORAGE_DIR"].mkdir(parents=True, exist_ok=True)
-    client_keys_dir = 'server/pki'
-    server_public_key_path = 'server/pki/Group_20.asc'
-    server_private_key_path = 'server/server_private_key/private_key.asc'
+    
+    #fixa path till keys
+    BASE_DIR = Path(__file__).parent.resolve()
+
+    client_keys_dir = BASE_DIR / "pki"
+    server_public_key_path = BASE_DIR / "pki" / "Group_20.asc"
+    server_private_key_path = BASE_DIR / "server_private_key" / "private_key.asc"
     server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
     
-    id_manager = IdentityManager(client_keys_dir,
+    #client_keys_dir = 'pki/'
+    #server_public_key_path = 'pki/Group_20.asc'
+    #server_private_key_path = 'server_private_key/private_key.asc'
+    #server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
+    #
+    identity_manager = IdentityManager(client_keys_dir,
      server_public_key_path, 
      server_private_key_path,
      server_private_key_passphrase)
@@ -948,17 +956,19 @@ def create_app():
             "method": method,
             "position": position
         }), 201
+        
+    @app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
+    @require_auth
+    def initiate_rmap(payload):
+        payload = request.get_json(silent=True) or {}
+        result = rmap.handle_message1(payload)
+        print(result)
 
+    
     return app
     
-@app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
-@require_auth
-def initiate_rmap():
-    payload = request.get_json(silent=True) or {}
-    result = rmap.handle_message1(payload)
-    print(result)
 
-    return app
+
 
 
 
