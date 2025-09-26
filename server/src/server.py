@@ -46,6 +46,18 @@ def create_app():
     app.config["DB_NAME"] = os.environ.get("DB_NAME", "tatou")
 
     app.config["STORAGE_DIR"].mkdir(parents=True, exist_ok=True)
+    client_keys_dir = 'server/pki'
+    server_public_key_path = 'server/pki/Group_20.asc'
+    server_private_key_path = 'server/server_private_key/private_key.asc'
+    server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
+    
+    id_manager = IdentityManager(client_keys_dir,
+     server_public_key_path, 
+     server_private_key_path,
+     server_private_key_passphrase)
+
+    rmap = RMAP(identity_manager)
+
 
     # --- DB engine only (no Table metadata) ---
     def db_url() -> str:
@@ -939,13 +951,17 @@ def create_app():
 
     return app
     
-#@app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
-#@require_auth
-#def initiate_rmap():
-#    return app
+@app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
+@require_auth
+def initiate_rmap():
+    payload = request.get_json(silent=True) or {}
+    result = rmap.handle_message1(payload)
+    print(result)
+
+    return app
 
 
-# @app.post("/api/read-watermark/<int:document_id>")
+
 
 
 
