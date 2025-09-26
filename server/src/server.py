@@ -666,6 +666,7 @@ def create_app():
         try:
             file_path.relative_to(storage_root)
         except ValueError:
+            print("e1")
             return jsonify({"error": "document path invalid"}), 500
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
@@ -700,8 +701,10 @@ def create_app():
 
             #print("kommer hit 703")
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
+                print("e2")
                 return jsonify({"error": "watermarking produced no output"}), 500
         except Exception as e:
+            print("e3", e)
             return jsonify({"error": f"watermarking failed: {e}"}), 500
 
         # build destination file name: "<original_name>__<intended_to>.pdf"
@@ -718,6 +721,7 @@ def create_app():
             with dest_path.open("wb") as f:
                 f.write(wm_bytes)
         except Exception as e:
+            print("e4")
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
 
         # link token = sha1(watermarked_file_name)

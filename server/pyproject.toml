@@ -15,7 +15,8 @@ dependencies = [
   	"reportlab",
 	"pikepdf",
 	"pymupdf",
-	"PyCryptodome"
+	"PyCryptodome",
+	"ghostscript"
 ]
 
 [project.optional-dependencies]
