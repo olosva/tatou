@@ -84,10 +84,10 @@ class MetadataEmbedding(WatermarkingMethod):
             self,
             pdf: PdfSource,
             key: str,
-            position = None,
-            iv = None,
-            tag = None,
-            salt = None
+            position=None,
+            iv=None,
+            tag=None,
+            salt=None
     ) -> str:
         """Read the secret from metadata using the given key."""
         data = load_pdf_bytes(pdf)
