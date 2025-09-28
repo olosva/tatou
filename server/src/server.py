@@ -628,7 +628,7 @@ def create_app():
     @app.post("/api/create-watermark")
     @app.post("/api/create-watermark/<string:document_id>")
     @require_auth #ändrade till str
-    def create_watermark(document_id: str | None = None):
+    def create_watermark(document_id: str | None = None, link_token: str | None = None):
         # accept id from path, query (?id= / ?documentid=), or JSON body on GET
         #print("kommer hit början")
 
@@ -748,8 +748,10 @@ def create_app():
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
         
         vid = str(uuid.uuid4())
-        # link token = sha1(watermarked_file_name)
-        link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
+        
+        #check if link_token is provided in the payload via RMAP else do as normal
+        if link_token is None:
+            link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
         #print(doc_id, link_token, intended_for, secret, method, position, dest_path)
         try:
             with get_engine().begin() as conn:
@@ -957,28 +959,50 @@ def create_app():
             "position": position
         }), 201
         
-    @app.post("/api/rmap-initiate/<ASCII_armored_base64:payload")
-    @require_auth
-    def initiate_rmap(payload):
-        payload = request.get_json(silent=True) or {}
+    @app.post("/api/rmap-initiate")
+    #@require_auth
+    def initiate_rmap():
+        # Get raw POST data
+        
+        #print(payload)
+        if request.is_json: 
+            payload = request.get_json()
+            print(payload)
+        else:
+        # Get raw text/binary data
+            payload = request.get_data(as_text=True)
+            
+            
         result = rmap.handle_message1(payload)
         print(result)
+        
+        return jsonify(result), 200
+    
+    
+    @app.post("/api/rmap-get-link")
+    #@require_auth
+    def rmap_get_link():
+        # Get raw POST data
+        
+        #print(payload)
+        if request.is_json: 
+            payload = request.get_json()
+            print(payload)
+        else:
+        # Get raw text/binary data
+            payload = request.get_data(as_text=True)
+            
+        #id to the pdf on admin@admin.admin account that other groups can watermark    
+        pdf_id = '619f9c58-6e40-40d2-ae59-07929e8de44b'
+        result = rmap.handle_message2(payload)
+        create_watermark(document_id=pdf_id, link_token=result.get("result"))
+        print(result)
+        
+        return jsonify(result), 200
 
     
     return app
     
-
-
-
-
-
-
-
-
-
-
-
-
 # WSGI entrypoint
 app = create_app()
 
