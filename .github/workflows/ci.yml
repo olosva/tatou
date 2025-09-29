@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: tatou
+          MARIADB_USER: tatou
+          MARIADB_PASSWORD: tatou
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y ghostscript
+
+      - name: Install deps
+        run: |
+          python -m pip install -U pip
+          pip install -e ".[dev]"
+          pip install schemathesis
+
+      - name: Run unit tests
+        env:
+          TEST_HTTP_BASE: http://localhost:5000
+          DB_HOST: 127.0.0.1
+          DB_PORT: "3306"
+          DB_USER: tatou
+          DB_PASSWORD: tatou
+          DB_NAME: tatou
+          SECRET_KEY: ci-secret
+        run: |
+          nohup python -m src.server >/dev/null 2>&1 &
+          python - <<'PY'
+import socket, time, sys
+for _ in range(60):
+    s=socket.socket()
+    if s.connect_ex(('127.0.0.1',5000))==0:
+        s.close(); sys.exit(0)
+    s.close(); time.sleep(0.5)
+print("Server never came up"); sys.exit(1)
+PY
+          pytest -q
+
+      - name: Schemathesis (smoke)
+        env:
+          TEST_HTTP_BASE: http://localhost:5000
+        run: |
+          mkdir -p fuzz
+          schemathesis run openapi/openapi.yaml \
+            --url "$TEST_HTTP_BASE" \
+            --phases=examples,fuzzing,stateful \
+            --checks=all \
+            -n 100 \
+            --report-junit-path fuzz/junit-smoke.xml \
+            --report-har-path fuzz/fuzz.har \
+            || true
+
+      - name: Upload fuzz artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: |
+            fuzz/junit-smoke.xml
+            fuzz/fuzz.har
