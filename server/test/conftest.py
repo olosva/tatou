@@ -4,53 +4,82 @@ import pathlib
 import sqlite3
 import pytest
 
-# === 0) Integration-läge via HTTP? ==========================
-# Sätt TEST_HTTP_BASE om du vill köra tester mot en redan körande server via HTTP.
-# Då gör conftest ingenting (inga imports av appen).
+# =========================================================
+# 0) Välj läge beroende på TEST_HTTP_BASE
+# =========================================================
 TEST_HTTP_BASE = os.getenv("TEST_HTTP_BASE")
+
 if TEST_HTTP_BASE:
-    # Inga fixtures behövs i HTTP-läge
-    pass
+    # ---------------------------
+    # HTTP-läge (pratar mot servern i Docker / CI)
+    # ---------------------------
+    import requests
+
+    @pytest.fixture(scope="session")
+    def base_url() -> str:
+        # ta bort ev. trailing slash så att base_url + path blir rätt
+        return TEST_HTTP_BASE.rstrip("/")
+
+    @pytest.fixture
+    def client(base_url):
+        class _Client:
+            def __init__(self):
+                self.s = requests.Session()
+
+            def get(self, path: str, **kwargs):
+                return self.s.get(base_url + path, **kwargs)
+
+            def post(self, path: str, **kwargs):
+                return self.s.post(base_url + path, **kwargs)
+
+            def delete(self, path: str, **kwargs):
+                return self.s.delete(base_url + path, **kwargs)
+
+        return _Client()
+
 else:
-    # === 1) Lokalt app-läge med SQLite ======================
+    # ---------------------------
+    # Lokalt läge (ingen extern server). Vi kör Flask lokalt & SQLite.
+    # OBS: Detta täcker "create-user" / "login" m.m. utan MySQL.
+    # ---------------------------
     TMP_DIR = tempfile.mkdtemp(prefix="tatou_test_")
     DB_PATH = pathlib.Path(TMP_DIR) / "test.sqlite"
     SQLITE_URL = f"sqlite:///{DB_PATH}"
     STORAGE_DIR = pathlib.Path(TMP_DIR) / "storage"
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
 
-    # 2) Miljövariabler som din app faktiskt läser
+    # Miljövariabler som server.py läser (din DB-override)
     os.environ.update({
         "TESTING": "1",
         "FLASK_ENV": "testing",
-        "DB_URL": SQLITE_URL,     # <-- server.py Steg 1 gör denna aktiv
+        "DB_URL": SQLITE_URL,           # server.db_url() plockar upp denna
         "STORAGE_DIR": str(STORAGE_DIR),
-        # Töm MySQL-relaterat så de inte stör
+        # Töm MySQL-relaterat så de inte stör i lokalt läge
         "DB_HOST": "",
         "DB_USER": "",
         "DB_PASSWORD": "",
     })
 
-    # 3) Skapa minimal schema i SQLite (matchar dina tabeller tillräckligt för tester)
+    # Minimal SQL-schema i SQLite som räcker för auth-flöden m.m.
     _DDL = """
     PRAGMA foreign_keys = ON;
 
     CREATE TABLE IF NOT EXISTS Users (
-      id       CHAR(36) PRIMARY KEY,
-      email    TEXT UNIQUE NOT NULL,
-      login    TEXT UNIQUE NOT NULL,
+      id        CHAR(36) PRIMARY KEY,
+      email     TEXT UNIQUE NOT NULL,
+      login     TEXT UNIQUE NOT NULL,
       hpassword TEXT NOT NULL,
-      creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      creation  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE TABLE IF NOT EXISTS Documents (
-      id       CHAR(36) PRIMARY KEY,
-      name     TEXT NOT NULL,
-      path     TEXT NOT NULL,
-      ownerid  CHAR(36) NOT NULL,
-      sha256   BLOB,
-      size     INTEGER,
-      creation TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      id        CHAR(36) PRIMARY KEY,
+      name      TEXT NOT NULL,
+      path      TEXT NOT NULL,
+      ownerid   CHAR(36) NOT NULL,
+      sha256    BLOB,
+      size      INTEGER,
+      creation  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(ownerid) REFERENCES Users(id) ON DELETE CASCADE
     );
 
@@ -70,7 +99,6 @@ else:
       FOREIGN KEY(documentid) REFERENCES Documents(id) ON DELETE CASCADE
     );
     """
-    # Kör DDL en gång
     _conn = sqlite3.connect(DB_PATH)
     try:
         _conn.executescript(_DDL)
@@ -78,11 +106,10 @@ else:
     finally:
         _conn.close()
 
-    # 4) Importera app-factoryn
-    #  – tack vare Steg 2 kan vi skriva:
+    # Importera din app-factory och exponera pytest-fixtures
     from server import create_app
 
-    @pytest.fixture
+    @pytest.fixture(scope="session")
     def app():
         app = create_app()
         app.config.update(TESTING=True)
@@ -91,3 +118,4 @@ else:
     @pytest.fixture
     def client(app):
         return app.test_client()
+

@@ -1,0 +1,298 @@
+openapi: 3.0.3
+info:
+  title: Tatou API
+  version: 0.1.0
+
+servers:
+  - url: http://localhost:5000
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+
+    CreateUserRequest:
+      type: object
+      required: [email, login, password]
+      properties:
+        email:
+          type: string
+          format: email
+        login:
+          type: string
+          minLength: 1
+        password:
+          type: string
+          minLength: 3   # matchar servern
+
+    CreateUserResponse:
+      type: object
+      required: [id, email, login]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        login: { type: string }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 1 }
+
+    LoginResponse:
+      type: object
+      required: [token, token_type, expires_in]
+      properties:
+        token: { type: string }
+        token_type: { type: string }
+        expires_in: { type: integer }
+
+    UploadDocumentResponse:
+      type: object
+      required: [id, name, creation, sha256, size]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        creation: { type: string }
+        sha256: { type: string }
+        size: { type: integer }
+
+    CreateWatermarkRequest:
+      type: object
+      required: [method, intended_for, secret, key]
+      properties:
+        method:
+          type: string
+          description: One of the server-supported methods
+          enum: [add-after-eof, unsafe-bash-append-eof, metadata-embedding, visible-stamp-gs, wm-encrypted]
+        intended_for: { type: string, minLength: 1 }
+        secret: { type: string, minLength: 1 }
+        key: { type: string, minLength: 1 }
+        position:
+          type: string
+          nullable: true
+
+    CreateWatermarkResponse:
+      type: object
+      required: [id, documentid, link, intended_for, method, filename, size]
+      properties:
+        id: { type: string }
+        documentid: { type: string }
+        link: { type: string }
+        intended_for: { type: string }
+        method: { type: string }
+        position: { type: string, nullable: true }
+        filename: { type: string }
+        size: { type: integer }
+
+    DocumentItem:
+      type: object
+      required: [id, name, creation, sha256, size]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        creation: { type: string }
+        sha256: { type: string }
+        size: { type: integer }
+
+    DocumentsListResponse:
+      type: object
+      required: [documents]
+      properties:
+        documents:
+          type: array
+          items:
+            $ref: '#/components/schemas/DocumentItem'
+
+paths:
+  /healthz:
+    get:
+      operationId: Healthz
+      responses:
+        "200":
+          description: OK
+        "503":
+          description: DB down
+
+  /api/create-user:
+    post:
+      operationId: CreateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateUserRequest'
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateUserResponse'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "503":
+          description: DB error
+
+  /api/login:
+    post:
+      operationId: Login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "503":
+          description: DB error
+
+  /api/upload-document:
+    post:
+      operationId: UploadDocument
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                name: { type: string }
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadDocumentResponse'
+          links:
+            CreateWatermarkFromUpload:
+              operationId: CreateWatermark
+              parameters:
+                id: "$response.body#/id"
+        "400":
+          description: Invalid PDF or bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          description: Unauthorized
+        "503":
+          description: DB error
+
+  /api/create-watermark:
+    post:
+      operationId: CreateWatermark
+      security:
+        - bearerAuth: []
+      parameters:
+        - in: query
+          name: id
+          schema: { type: string }
+          required: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateWatermarkRequest'
+      responses:
+        "201":
+          description: Created watermarked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateWatermarkResponse'
+        "400":
+          description: Not applicable / bad input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not found
+        "410":
+          description: File missing
+        "500":
+          description: Internal error
+        "503":
+          description: DB error
+
+  /api/get-watermarking-methods:
+    get:
+      operationId: GetMethods
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [methods, count]
+                properties:
+                  count: { type: integer }
+                  methods:
+                    type: array
+                    items:
+                      type: object
+                      required: [name, description]
+                      properties:
+                        name: { type: string }
+                        description: { type: string }
+
+  /api/list-documents:
+    get:
+      operationId: ListDocuments
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DocumentsListResponse'
+        "401":
+          description: Unauthorized
