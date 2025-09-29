@@ -5,80 +5,97 @@ on:
   pull_request:
 
 jobs:
-  test:
+  test-and-fuzz:
     runs-on: ubuntu-latest
-    services:
-      db:
-        image: mariadb:11.4
-        env:
-          MARIADB_ROOT_PASSWORD: root
-          MARIADB_DATABASE: tatou
-          MARIADB_USER: tatou
-          MARIADB_PASSWORD: tatou
-        ports: ["3306:3306"]
-        options: >-
-          --health-cmd="mysqladmin ping -proot"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
+    defaults:
+      run:
+        working-directory: server   # kör alla kommandon i ./server
+    env:
+      TEST_HTTP_BASE: http://localhost:5000
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: '3.12'
 
-      - name: Install system deps
-        run: sudo apt-get update && sudo apt-get install -y ghostscript
+      - name: Install system deps (ghostscript)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ghostscript
 
-      - name: Install deps
+      - name: Install Python deps
         run: |
           python -m pip install -U pip
-          pip install -e ".[dev]"
-          pip install schemathesis
+          pip install -e ".[dev]" schemathesis hypothesis requests
 
-      - name: Run unit tests
-        env:
-          TEST_HTTP_BASE: http://localhost:5000
-          DB_HOST: 127.0.0.1
-          DB_PORT: "3306"
-          DB_USER: tatou
-          DB_PASSWORD: tatou
-          DB_NAME: tatou
-          SECRET_KEY: ci-secret
+      - name: Create .env for docker compose
         run: |
-          nohup python -m src.server >/dev/null 2>&1 &
-          python - <<'PY'
-import socket, time, sys
-for _ in range(60):
-    s=socket.socket()
-    if s.connect_ex(('127.0.0.1',5000))==0:
-        s.close(); sys.exit(0)
-    s.close(); time.sleep(0.5)
-print("Server never came up"); sys.exit(1)
-PY
-          pytest -q
+          cat > .env <<'EOF'
+          SECRET_KEY=ci-secret
+          MARIADB_ROOT_PASSWORD=tatou
+          MARIADB_USER=tatou
+          MARIADB_PASSWORD=tatou
+          DB_USER=tatou
+          DB_PASSWORD=tatou
+          DB_HOST=db
+          DB_NAME=tatou
+          EOF
 
-      - name: Schemathesis (smoke)
-        env:
-          TEST_HTTP_BASE: http://localhost:5000
+      - name: Build & start stack
         run: |
-          mkdir -p fuzz
+          docker compose build server
+          docker compose up -d
+          docker compose ps
+
+      - name: Wait for /healthz
+        run: |
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "$TEST_HTTP_BASE/healthz") || code=000
+            if [ "$code" = "200" ]; then
+              echo "Server is healthy"
+              exit 0
+            fi
+            echo "Waiting for server... ($i/60), code=$code"
+            sleep 2
+          done
+          echo "Server failed to become healthy"
+          docker compose logs --no-color > ../docker-logs.txt || true
+          exit 1
+
+      - name: Run pytest
+        run: |
+          pytest -q --maxfail=1 --disable-warnings --junitxml=../pytest-report.xml
+
+      - name: Schemathesis smoke fuzz (do not fail CI)
+        run: |
           schemathesis run openapi/openapi.yaml \
             --url "$TEST_HTTP_BASE" \
             --phases=examples,fuzzing,stateful \
             --checks=all \
             -n 100 \
-            --report-junit-path fuzz/junit-smoke.xml \
-            --report-har-path fuzz/fuzz.har \
-            || true
+            --report-junit-path ../fuzz-junit.xml \
+            --report-har-path ../fuzz.har \
+          || echo "::warning::Schemathesis found failures (see artifacts); not failing CI"
 
-      - name: Upload fuzz artifacts
+      - name: Save docker logs
+        if: always()
+        run: docker compose logs --no-color > ../docker-logs.txt || true
+
+      - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-artifacts
+          name: ci-artifacts
           path: |
-            fuzz/junit-smoke.xml
-            fuzz/fuzz.har
+            ../pytest-report.xml
+            ../fuzz-junit.xml
+            ../fuzz.har
+            ../docker-logs.txt
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
