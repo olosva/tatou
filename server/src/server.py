@@ -14,8 +14,23 @@ from pypdf.errors import PdfReadError
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
-from rmap.identity_manager import IdentityManager
-from rmap.rmap import RMAP
+import sys, types
+try:
+    import imghdr  # finns på <=3.12
+except Exception:
+    if sys.version_info >= (3, 13) and "imghdr" not in sys.modules:
+        _im = types.ModuleType("imghdr")
+        def what(file, h=None):  # minimalistisk stub
+            return None
+        _im.what = what
+        sys.modules["imghdr"] = _im
+        
+try:
+    from rmap.identity_manager import IdentityManager
+    from rmap.rmap import RMAP
+except Exception as _e:
+    IdentityManager = None
+    RMAP = None
 
 import pickle as _std_pickle
 import secrets
@@ -49,10 +64,22 @@ def create_app():
 
     # --- DB engine only (no Table metadata) ---
     def db_url() -> str:
+    # Test/override: om någon av dessa env-variabler finns, använd den
+        override = (
+            os.environ.get("DB_URL")
+            or os.environ.get("DATABASE_URL")
+            or os.environ.get("SQLALCHEMY_DATABASE_URI")
+        )
+        if override:
+            return override
+
+    # Standard: MySQL i Docker
         return (
             f"mysql+pymysql://{app.config['DB_USER']}:{app.config['DB_PASSWORD']}"
             f"@{app.config['DB_HOST']}:{app.config['DB_PORT']}/{app.config['DB_NAME']}?charset=utf8mb4"
         )
+
+
 
     def get_engine():
         eng = app.config.get("_ENGINE")
@@ -693,6 +720,16 @@ def create_app():
                 method=method,
                 position=position
             )
+
+            if isinstance(result, (bytes, bytearray)):
+                result = {"pdf_bytes": bytes(result)}
+
+            if isinstance(result, dict) and "pdf_bytes" not in result:
+                if "bytes" in result:
+                    result["pdf_bytes"] = result["bytes"]
+                elif "data" in result:
+                    result["pdf_bytes"] = result["data"]
+
             wm_bytes = result["pdf_bytes"]
             iv = result.get("nonce")
             tag = result.get("tag")
@@ -726,6 +763,23 @@ def create_app():
 
         # link token = sha1(watermarked_file_name)
         link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
+        # --- ADD-ONLY: säkra unik länk innan INSERT för att undvika uq_versions_link-krock ---
+        try:
+            with get_engine().connect() as _conn:
+                for _ in range(5):  # gör några försök om kollision
+                    exists = _conn.execute(
+                        text("SELECT 1 FROM Versions WHERE link = :link LIMIT 1"),
+                        {"link": link_token},
+                    ).first()
+                    if not exists:
+                        break
+            # om kollision: blanda in document_id + lite salt och re-hasha
+                    salted = f"{doc_id}:{candidate}:{secrets.token_hex(8)}"
+                    link_token = hashlib.sha1(salted.encode("utf-8")).hexdigest()
+        except Exception as _e:
+    # mjuk-fail: går vidare med nuvarande link_token, INSERT:en fångar ev. fel senare
+            pass
+
         vid = str(uuid.uuid4())
         try:
             with get_engine().begin() as conn:
