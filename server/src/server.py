@@ -623,15 +623,15 @@ def create_app():
             "note": delete_error,   # null/omitted if everything was fine
         }), 200
         
+    #seperate function to allow easier calling from both RMAP and the internal endpoint
+    #this way means we can still have the require_auth decorator on the internal endpoint, but still call it as a normal function from RMAP
+    def create_internal_watermark(uid: str,
+                                  document_id: str | None = None,
+                                  link_token: str | None = None,
+                                  **kwargs #neat keyword :)
+                                  ):
+        payload = kwargs
         
-    # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
-    @app.post("/api/create-watermark")
-    @app.post("/api/create-watermark/<string:document_id>")
-    @require_auth #ändrade till str
-    def create_watermark(document_id: str | None = None, link_token: str | None = None):
-        # accept id from path, query (?id= / ?documentid=), or JSON body on GET
-        #print("kommer hit början")
-
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -643,15 +643,17 @@ def create_app():
         except (TypeError, ValueError):
             return jsonify({"error": "document id required"}), 400
 
-        payload = request.get_json(silent=True) or {}
+        #payload = request.get_json(silent=True) or {}
         # allow a couple of aliases for convenience
-        method = payload.get("method")
+        #if the method gets called from RMAP it might not have a method in the payload so we select the best one as default
+        
+        method = payload.get("method")   
+        #having a really hard time figuring out how to get the parameters required for the watermarking from RMAP without i looking like shit
         intended_for = payload.get("intended_for")
         position = payload.get("position") or None
         secret = payload.get("secret")
         key = payload.get("key")
-
-        # validate input
+         # validate input
         try:
             doc_id = str(doc_id)
         except (TypeError, ValueError):
@@ -670,7 +672,7 @@ def create_app():
                         WHERE id = :id AND ownerid = :uid
                         LIMIT 1
                     """),
-                    {"id": doc_id, "uid": g.user["id"]},
+                    {"id": doc_id, "uid": uid},
                 ).first()
         except Exception as e:
             print("kommer hit 655")
@@ -782,6 +784,7 @@ def create_app():
             except Exception:
                 pass
             print("746")
+            print(e)
             return jsonify({"error": f"database error during version insert: {e}"}), 503
 
         return jsonify({
@@ -794,6 +797,23 @@ def create_app():
             "filename": candidate,
             "size": len(wm_bytes),
         }), 201
+    
+        
+       
+       
+         
+    # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
+    @app.post("/api/create-watermark")
+    @app.post("/api/create-watermark/<string:document_id>")
+    @require_auth #ändrade till str
+    def create_watermark(document_id: str | None = None):
+        #''', link_token: str | None = None'''
+        payload = request.get_json(silent=True) or {}
+        return create_internal_watermark(
+            document_id=document_id,
+            uid = g.user["id"],
+            **payload
+        )
         
         
     @app.post("/api/load-plugin")
@@ -890,6 +910,7 @@ def create_app():
 
         payload = request.get_json(silent=True) or {}
         # allow a couple of aliases for convenience
+        
         method = payload.get("method")
         position = payload.get("position") or None
         key = payload.get("key")
@@ -987,18 +1008,30 @@ def create_app():
         #print(payload)
         if request.is_json: 
             payload = request.get_json()
-            print(payload)
+            #print(payload)
         else:
         # Get raw text/binary data
             payload = request.get_data(as_text=True)
             
         #id to the pdf on admin@admin.admin account that other groups can watermark    
+        admin_uid = '281b4cb1-abdb-4a61-ad33-9a78cbab12b7'
         pdf_id = '619f9c58-6e40-40d2-ae59-07929e8de44b'
         result = rmap.handle_message2(payload)
-        create_watermark(document_id=pdf_id, link_token=result.get("result"))
-        print(result)
         
-        return jsonify(result), 200
+        #we can now create the watermark with the parameters received from RMAP
+        errors = create_internal_watermark(
+                         uid=admin_uid,
+                         document_id=pdf_id,
+                         link_token=result.get("result"),
+                         method="wm_encrypted",
+                         intended_for="rmap_recipient",
+                         secret="secret",
+                         key="key")
+        
+        print(errors)
+        link = {"result": result.get("result")}
+        print(link)
+        return jsonify(link), 200
 
     
     return app
