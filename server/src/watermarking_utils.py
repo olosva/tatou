@@ -43,6 +43,7 @@ from watermarking_method import (
 )
 from add_after_eof import AddAfterEOF
 from unsafe_bash_bridge_append_eof import UnsafeBashBridgeAppendEOF
+from metadata_embedding import MetadataEmbedding
 from wm_visible_stamp_gs import VisibleStampGS
 from wm_encrypted import wm_encrypted
 
@@ -56,6 +57,7 @@ from wm_encrypted import wm_encrypted
 METHODS: Dict[str, WatermarkingMethod] = {
     AddAfterEOF.name: AddAfterEOF(),
     UnsafeBashBridgeAppendEOF.name: UnsafeBashBridgeAppendEOF(),
+    MetadataEmbedding.name: MetadataEmbedding(),
     VisibleStampGS.name: VisibleStampGS(),
     wm_encrypted.name: wm_encrypted(),
     #BinaryInvisibleWatermark.name: BinaryInvisibleWatermark(),
@@ -104,13 +106,7 @@ def apply_watermark(
 ) -> bytes:
     """Apply a watermark using the specified method and return new PDF bytes."""
     m = get_method(method)
-    return m.add_watermark(
-        pdf=pdf, 
-        secret=secret, 
-        key=key, 
-        position=position
-        
-        )
+    return m.add_watermark(pdf=pdf, secret=secret, key=key, position=position)
 
 def is_watermarking_applicable(
     method: str | WatermarkingMethod,
@@ -122,16 +118,7 @@ def is_watermarking_applicable(
     return m.is_watermark_applicable(pdf=pdf, position=position)
 
 
-def read_watermark(
-    method: str | WatermarkingMethod,
-    pdf: PdfSource,
-    key: str,
-    position: str | None = None,
-    iv: str | None = None,
-    tag: str | None = None,
-    salt: str | None = None
-) -> str:
-    
+def read_watermark(method: str | WatermarkingMethod, pdf: PdfSource, key: str, position=None, iv=None, tag=None, salt=None) -> str:
     """Recover a secret from ``pdf`` using the specified method."""
     m = get_method(method)
     return m.read_secret(pdf=pdf, key=key, position=position, iv=iv, tag=tag, salt=salt)
@@ -260,8 +247,6 @@ def explore_pdf(pdf: PdfSource) -> Dict[str, Any]:
         children.insert(i, c_page)
 
     root["children"] = children
-    
-
     return root
 
 

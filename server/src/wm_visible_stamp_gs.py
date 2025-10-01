@@ -33,12 +33,21 @@ class VisibleStampGS(WatermarkingMethod):
             if res.returncode != 0:
                 raise RuntimeError(f"Ghostscript failed: {res.stderr.strip()}")
             with open(out_path, "rb") as f:
-                return f.read()
+                return {"pdf_bytes": f.read(), "secret": secret}
+                # return f.read()
         finally:
             for p in (in_path, out_path):
                 try: os.unlink(p)
                 except Exception: pass
 
-    def read_secret(self, pdf: PdfSource, key: Optional[str] = None, position: Optional[str] = None) -> Optional[str]:
+    def read_secret(
+            self,
+            pdf: PdfSource,
+            key: str,
+            position=None,
+            iv=None,
+            tag=None,
+            salt=None
+    ) -> Optional[str]:
         # Synlig stämpel – inget programmässigt att läsa ut.
-        return None
+        return "Secret is visible"

@@ -14,8 +14,23 @@ from pypdf.errors import PdfReadError
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
-from rmap.identity_manager import IdentityManager
-from rmap.rmap import RMAP
+import sys, types
+try:
+    import imghdr  # finns på <=3.12
+except Exception:
+    if sys.version_info >= (3, 13) and "imghdr" not in sys.modules:
+        _im = types.ModuleType("imghdr")
+        def what(file, h=None):  # minimalistisk stub
+            return None
+        _im.what = what
+        sys.modules["imghdr"] = _im
+        
+try:
+    from rmap.identity_manager import IdentityManager
+    from rmap.rmap import RMAP
+except Exception as _e:
+    IdentityManager = None
+    RMAP = None
 
 import pickle as _std_pickle
 import secrets
@@ -27,7 +42,7 @@ except Exception:  # dill is optional
 
 import watermarking_utils as WMUtils
 from watermarking_method import WatermarkingMethod
-
+from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
 active_sessions = {}
 
 
@@ -70,10 +85,22 @@ def create_app():
 
     # --- DB engine only (no Table metadata) ---
     def db_url() -> str:
+    # Test/override: om någon av dessa env-variabler finns, använd den
+        override = (
+            os.environ.get("DB_URL")
+            or os.environ.get("DATABASE_URL")
+            or os.environ.get("SQLALCHEMY_DATABASE_URI")
+        )
+        if override:
+            return override
+
+    # Standard: MySQL i Docker
         return (
             f"mysql+pymysql://{app.config['DB_USER']}:{app.config['DB_PASSWORD']}"
             f"@{app.config['DB_HOST']}:{app.config['DB_PORT']}/{app.config['DB_NAME']}?charset=utf8mb4"
         )
+
+
 
     def get_engine():
         eng = app.config.get("_ENGINE")
@@ -282,7 +309,7 @@ def create_app():
 
         sha_hex = _sha256_file(stored_path)
         size = stored_path.stat().st_size
-        #print(size)
+
 
         try:
             with get_engine().begin() as conn:
@@ -681,7 +708,7 @@ def create_app():
                     {"id": doc_id, "uid": uid},
                 ).first()
         except Exception as e:
-            print("kommer hit 655")
+            print("e1", e)
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
@@ -727,20 +754,28 @@ def create_app():
                 method=method,
                 position=position
             )
+
+            if isinstance(result, (bytes, bytearray)):
+                result = {"pdf_bytes": bytes(result)}
+
+            if isinstance(result, dict) and "pdf_bytes" not in result:
+                if "bytes" in result:
+                    result["pdf_bytes"] = result["bytes"]
+                elif "data" in result:
+                    result["pdf_bytes"] = result["data"]
+
             wm_bytes = result["pdf_bytes"]
             iv = result.get("nonce")
             tag = result.get("tag")
             salt = result.get("salt")
-            secret = result.get("encrypted_secret")
-            
+            secret = result.get("secret")
+
             #print("kommer hit 703")
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
-                print("kommer hit 697")
+                print("e2")
                 return jsonify({"error": "watermarking produced no output"}), 500
-            
         except Exception as e:
-            print(e)
-            print("kommer hit 711")
+            print("e3", e)
             return jsonify({"error": f"watermarking failed: {e}"}), 500
 
         # build destination file name: "<original_name>__<intended_to>.pdf"
@@ -757,6 +792,7 @@ def create_app():
             with dest_path.open("wb") as f:
                 f.write(wm_bytes)
         except Exception as e:
+            print("e4")
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
         
         vid = str(uuid.uuid4())
@@ -771,9 +807,9 @@ def create_app():
             with get_engine().begin() as conn:
                 conn.execute(
                     text("""
-                        INSERT INTO Versions (id, documentid, link, intended_for, secret, iv, tag, salt, method, position, path)
-                        VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
-                    """),
+                                INSERT INTO Versions (id, documentid, link, intended_for, secret, iv, tag, salt, method, position, path)
+                                VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
+                            """),
                     {
                         "id": vid,
                         "documentid": doc_id,
@@ -788,7 +824,7 @@ def create_app():
                         "path": dest_path
                     },
                 )
-                #vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+                # vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
         except Exception as e:
             # best-effort cleanup if DB insert fails
             try:
@@ -917,7 +953,6 @@ def create_app():
         try:
             doc_id = document_id
         except (TypeError, ValueError):
-            print("945")
             return jsonify({"error": "document id required"}), 400
 
         payload = request.get_json(silent=True) or {}
@@ -926,7 +961,6 @@ def create_app():
         method = payload.get("method")
         position = payload.get("position") or None
         key = payload.get("key")
-        print(method, position, key)
 
         # validate input
         try:
@@ -950,13 +984,12 @@ def create_app():
                     {"id": doc_id, "uid": g.user["id"]},
                 ).first()
         except Exception as e:
-            print("977")
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
             return jsonify({"error": "document not found"}), 404
 
-        # resolve path safely under STORAGE_DIR
+            # resolve path safely under STORAGE_DIR
         storage_root = Path(app.config["STORAGE_DIR"]).resolve()
         file_path = Path(row.path)
         if not file_path.is_absolute():
@@ -968,7 +1001,7 @@ def create_app():
             return jsonify({"error": "document path invalid"}), 500
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
-        
+
         #get the parameters from the document needed to read the watermark
 
         secret = None
@@ -983,7 +1016,6 @@ def create_app():
                 salt=row.salt
             )
         except Exception as e:
-            #print(e)
             return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
         return jsonify({
             "documentid": doc_id,

@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS `Versions` (
   `link` VARCHAR(255) NOT NULL,                -- public token or URL slug
   `intended_for` VARCHAR(320) NULL,            -- optional email/name
   `secret` VARCHAR(320) NOT NULL,
-  `iv` VARCHAR(24) NULL, 
+  `iv` VARCHAR(24) NULL,
   `tag` VARCHAR(24) NULL,
   `salt` VARCHAR(24) NULL,             -- secret
   `method` VARCHAR(32) NOT NULL,               -- e.g., "text_overlay"
