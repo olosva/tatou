@@ -38,7 +38,7 @@ pip-delete-this-directory.txt
 
 #server key
 server_private_key/
-*.asc
+private_key.asc
 
 # Unit test / coverage reports
 htmlcov/
