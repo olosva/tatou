@@ -52,6 +52,7 @@ def create_app():
     client_keys_dir = BASE_DIR / "pki"
     server_public_key_path = BASE_DIR / "pki" / "Group_20.asc"
     server_private_key_path = BASE_DIR / "server_private_key" / "private_key.asc"
+    #remove passphrase from git
     server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
     
     #client_keys_dir = 'pki/'
