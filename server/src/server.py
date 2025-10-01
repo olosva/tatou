@@ -5,7 +5,7 @@ import datetime as dt
 from pathlib import Path
 from functools import wraps
 
-from flask import Flask, jsonify, request, g, send_file
+from flask import Flask, jsonify, request, g, send_file, url_for
 from werkzeug.utils import secure_filename
 from werkzeug.security import generate_password_hash, check_password_hash
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
@@ -631,7 +631,7 @@ def create_app():
                                   **kwargs #neat keyword :)
                                   ):
         payload = kwargs
-        
+        print("kommer hit med rmap-get-link")
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -641,6 +641,7 @@ def create_app():
         try:
             doc_id = document_id
         except (TypeError, ValueError):
+            print("644")
             return jsonify({"error": "document id required"}), 400
 
         #payload = request.get_json(silent=True) or {}
@@ -650,19 +651,23 @@ def create_app():
         method = payload.get("method")   
         #having a really hard time figuring out how to get the parameters required for the watermarking from RMAP without i looking like shit
         intended_for = payload.get("intended_for")
-        position = payload.get("position") or None
+        position = payload.get("position")
         secret = payload.get("secret")
         key = payload.get("key")
          # validate input
         try:
             doc_id = str(doc_id)
         except (TypeError, ValueError):
+            print("661")
             return jsonify({"error": "document_id (int) is required"}), 400
         if not method or not intended_for or not isinstance(secret, str) or not isinstance(key, str):
+            print("664")
             return jsonify({"error": "method, intended_for, secret, and key are required"}), 400
 
         # lookup the document; enforce ownership
         #checks that the document belongs to the user via ownerID
+        print("669")
+        print(doc_id)
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -679,6 +684,7 @@ def create_app():
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
+            print("687")
             return jsonify({"error": "document not found"}), 404
 
         # resolve path safely under STORAGE_DIR
@@ -690,8 +696,10 @@ def create_app():
         try:
             file_path.relative_to(storage_root)
         except ValueError:
+            print("699")
             return jsonify({"error": "document path invalid"}), 500
         if not file_path.exists():
+            print("701")
             return jsonify({"error": "file missing on disk"}), 410
 
         # check watermark applicability
@@ -705,7 +713,8 @@ def create_app():
             if applicable is False:
                 return jsonify({"error": "watermarking method not applicable"}), 400
         except Exception as e:
-            
+            print("716")
+            print(e)
             return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
 
         # apply watermark → bytes
@@ -755,6 +764,8 @@ def create_app():
         if link_token is None:
             link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
         #print(doc_id, link_token, intended_for, secret, method, position, dest_path)
+        print(link_token)
+        print(uid,document_id , "767")
         try:
             with get_engine().begin() as conn:
                 conn.execute(
@@ -997,7 +1008,7 @@ def create_app():
         result = rmap.handle_message1(payload)
         print(result)
         
-        return jsonify(result), 200
+        return jsonify(result.get("payload")), 200
     
     
     @app.post("/api/rmap-get-link")
@@ -1019,19 +1030,23 @@ def create_app():
         result = rmap.handle_message2(payload)
         
         #we can now create the watermark with the parameters received from RMAP
-        errors = create_internal_watermark(
+        create_internal_watermark(
                          uid=admin_uid,
                          document_id=pdf_id,
                          link_token=result.get("result"),
-                         method="wm_encrypted",
+                         method="wm-encrypted",
                          intended_for="rmap_recipient",
-                         secret="secret",
-                         key="key")
+                         secret="watermarked",
+                         key="keysecret",
+                         position = "none")
         
-        print(errors)
-        link = {"result": result.get("result")}
-        print(link)
-        return jsonify(link), 200
+        
+        #use get-version endpoint with the newly created wm pdf in order
+        #for the user to get their pdf 
+        #link = {'http://127.0.0.1:5000/api/get-version/'+result.get("result")}
+        #return jsonify({"link" : link}), 200
+        link_url = url_for("get_version", link=result.get("result"), _external=True)
+        return jsonify({"link": link_url}), 200
 
     
     return app
