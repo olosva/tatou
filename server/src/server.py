@@ -75,10 +75,7 @@ def create_app():
     #server_private_key_path = 'server_private_key/private_key.asc'
     #server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
     #
-    identity_manager = IdentityManager(client_keys_dir,
-     server_public_key_path, 
-     server_private_key_path,
-     server_private_key_passphrase)
+    identity_manager = IdentityManager(client_keys_dir,server_public_key_path,server_private_key_path,server_private_key_passphrase)
 
     rmap = RMAP(identity_manager)
 
