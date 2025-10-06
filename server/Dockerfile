@@ -1,9 +1,9 @@
-
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app/src:${PYTHONPATH}
+    PYTHONPATH=/app/src:${PYTHONPATH} \
+    STORAGE_DIR=/app/storage
 
 WORKDIR /app
 
@@ -20,8 +20,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml /app/pyproject.toml
 COPY src /app/src
 COPY flag /app/flag
+
+# (Behåll) tidigare kopior till /app/server/...
 COPY src/pki /app/server/pki
 COPY src/server_private_key /app/server/server_private_key
+
+# (+) Lägg även nycklar där server.py förväntar sig dem: /app/src/...
+COPY src/pki /app/src/pki
+COPY src/server_private_key /app/src/server_private_key
+
 COPY wm_stamp.sh /app/src/wm_stamp.sh
 COPY entrypoint.sh /app/entrypoint.sh
 
@@ -32,10 +39,9 @@ RUN chmod +x /app/entrypoint.sh /app/src/wm_stamp.sh \
 # Install Python dependencies
 RUN pip install --no-cache-dir -e .
 
-# Gunicorn shim
-RUN mkdir -p /app/server \
+# Gunicorn shim (behålls) + säkerställ storage-katalogen finns
+RUN mkdir -p /app/server /app/storage \
  && printf "from src.server import create_app\n" > /app/server/__init__.py
 
 EXPOSE 5000
 CMD ["./entrypoint.sh"]
-

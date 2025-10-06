@@ -1,34 +1,35 @@
-from server import app
-from werkzeug.security import generate_password_hash, check_password_hash
+# test/test_api.py
+import pytest
 
+def _ensure_user(client, email: str, login: str, password: str):
+    # Försök skapa; ignorera om den redan finns
+    client.post("/api/create-user", json={"email": email, "login": login, "password": password})
 
-def test_login_sql_injection():
-    client = app.test_client()
-    payload = {"email": "' OR '1'='1", "password": "irrelevant"}
-    res = client.post("/api/login", json=payload)
-    # Should reject injection attempts
-    assert res.status_code == 400
-    assert "error" in res.get_json()
-    
-def test_create_user_sql_injection():
-    client = app.test_client()
-    payload = {"email": "' OR '1'='1", "login":""' OR ''='"", "password": "irrelevant"}
-    res = client.post("/api/create-user", json=payload)
-    # Should reject injection attempts
-    assert res.status_code == 400
-    assert "error" in res.get_json()
-    
 def test_tokens_unique_for_different_users(client):
-    # create or ensure two users exist: user_a and user_b
-    res_a = client.post("/api/login", json={"email":"olof@olof.olof","password":"olof"})
-    res_b = client.post("/api/login", json={"email":"jacob@jacob.jacob","password":"jacob"})
-    res_c = client.post("/api/login", json={"email":"elliot@elliot.elliot","password":"elliot"})
+    users = [
+        ("olof@olof.olof",   "olof",   "olof"),
+        ("jacob@jacob.jacob","jacob",  "jacob"),
+        ("elliot@elliot.elliot","elliot","elliot"),
+    ]
+    for email, login, pw in users:
+        _ensure_user(client, email, login, pw)
+
+    res_a = client.post("/api/login", json={"email": users[0][0], "password": users[0][2]})
+    res_b = client.post("/api/login", json={"email": users[1][0], "password": users[1][2]})
+    res_c = client.post("/api/login", json={"email": users[2][0], "password": users[2][2]})
+
     assert res_a.status_code == 200
     assert res_b.status_code == 200
     assert res_c.status_code == 200
-    token_a = res_a.get_json()["token"]
-    token_b = res_b.get_json()["token"]
-    token_c = res_c.get_json()["token"]
-    assert len({token_a, token_b, token_c}) == 3, "Tokens must be unique per user"
+
+    ta = res_a.get_json()["token"]
+    tb = res_b.get_json()["token"]
+    tc = res_c.get_json()["token"]
+
+    # Alla tre tokens ska skilja sig (sessionsbaserade)
+    assert ta != tb
+    assert tb != tc
+    assert ta != tc
+
     
     

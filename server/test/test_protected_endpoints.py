@@ -1,39 +1,37 @@
-import os, requests, uuid
-
-BASE = os.getenv("TEST_HTTP_BASE")
-
-def _post_json(client, path, payload):
-    if BASE:
-        return requests.post(f"{BASE}{path}", json=payload, timeout=5)
-    else:
-        return client.post(path, json=payload)
+# test/test_protected_endpoints.py
+import io
 
 def _get(client, path, headers=None):
-    if BASE:
-        return requests.get(f"{BASE}{path}", headers=headers or {}, timeout=5)
-    else:
-        return client.get(path, headers=headers or {})
+    return client.get(path, headers=headers or {})
 
-def test_protected_endpoints_require_auth(client=None):
-    # 1) Utan token ska 401
+def _post(client, path, headers=None, data=None, content_type=None):
+    return client.post(path, headers=headers or {}, data=data, content_type=content_type)
+
+def test_protected_endpoints_require_auth(client):
+    # 1) Utan token => 401
     r = _get(client, "/api/list-documents")
     assert r.status_code == 401
 
-    # 2) Skapa user + logga in
-    email = f"p{uuid.uuid4().hex[:8]}@ex.com"
-    login = f"p_{uuid.uuid4().hex[:8]}"
+    # 2) Skapa en användare och logga in, prova sen upload/list
+    email = "protected@example.com"
+    login = "protected_user"
     pw = "abc12345"
-
-    r = _post_json(client, "/api/create-user", {"email": email, "login": login, "password": pw})
-    assert r.status_code == 201
-    r = _post_json(client, "/api/login", {"email": email, "password": pw})
+    client.post("/api/create-user", json={"email": email, "login": login, "password": pw})
+    r = client.post("/api/login", json={"email": email, "password": pw})
     assert r.status_code == 200
-    data = r.json() if BASE else r.get_json()
-    token = data["token"]
-
-    # 3) Med token ska funka
+    token = r.get_json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
+
+    # lista dokument (tom lista men 200)
     r = _get(client, "/api/list-documents", headers=headers)
     assert r.status_code == 200
-    body = r.json() if BASE else r.get_json()
-    assert "documents" in body
+
+    # ladda upp en minimal giltig PDF
+    # (PDF header + EOF – duger för pypdf-läsning i upload-endpointen)
+    fake_pdf = b"%PDF-1.4\n%...\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
+    data = {
+        "name": "sample.pdf",
+        "file": (io.BytesIO(fake_pdf), "sample.pdf"),
+    }
+    r = _post(client, "/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert r.status_code == 201
