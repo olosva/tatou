@@ -158,7 +158,7 @@ def create_app():
     
     @app.route("/<path:filename>")
     def static_files(filename):
-        # List of allowed files (these can be accessed by the public without security risk)
+     # List of allowed files (these can be accessed by the public without security risk)
         allowed_files = {
             "documents.html",
             "index.html",
@@ -168,7 +168,7 @@ def create_app():
         }
         if filename not in allowed_files:
             return jsonify({"error": "Access denied"}), 403
-        return app.send_static_file(filename)
+        return app.send_static_file(filename) 
 
     @app.route("/")
     def home():
@@ -261,6 +261,10 @@ def create_app():
         session_id = secrets.token_urlsafe(32)
         #add the session to the active sessions
         active_sessions[session_id] = {"uid": row.id, "login": row.login, "email": row.email}
+        
+        for keys,values in active_sessions.items():
+            print(keys)
+            print(values)
         
         #token now contains the same info as before, but with the session id
         #we can then look up the session id in the active sessions to get the user info and compare it to the u.id in the token
@@ -801,8 +805,8 @@ def create_app():
         if link_token is None:
             link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
         #print(doc_id, link_token, intended_for, secret, method, position, dest_path)
-        print(link_token)
-        print(uid,document_id , "767")
+        #print(link_token)
+        #print(uid,document_id , "767")
         try:
             with get_engine().begin() as conn:
                 conn.execute(
