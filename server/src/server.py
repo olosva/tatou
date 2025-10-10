@@ -262,9 +262,7 @@ def create_app():
         #add the session to the active sessions
         active_sessions[session_id] = {"uid": row.id, "login": row.login, "email": row.email}
         
-        for keys,values in active_sessions.items():
-            print(keys)
-            print(values)
+        
         
         #token now contains the same info as before, but with the session id
         #we can then look up the session id in the active sessions to get the user info and compare it to the u.id in the token
