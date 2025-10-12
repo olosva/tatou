@@ -158,35 +158,45 @@ class wm_encrypted(WatermarkingMethod):
 
 
     def add_visible_watermark(self, pdf_bytes, position, secret):
-        #print("kommer in visible")
         pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+
         for page in pdf:
             rect = page.rect
+            font_size = 36
+            font_name = "helv"
+
+            # Estimate text width
+            text_width = fitz.get_text_length(secret, fontname=font_name, fontsize=font_size)
+
             if position == "center":
-                x, y = rect.width / 2, rect.height / 2
-                align = 1  # center
+                x = (rect.width - text_width) / 2
+                y = rect.height / 2
+                rotate = 45
             elif position == "top":
-                x, y = rect.width / 2, rect.height * 0.1
-                align = 1
+                x = (rect.width - text_width) / 2
+                y = rect.height * 0.1
+                rotate = 0
             elif position == "bottom":
-                x, y = rect.width / 2, rect.height * 0.9
-                align = 1
-            else:  # fallback: center
-                x, y = rect.width / 2, rect.height / 2
-                align = 1
+                x = (rect.width - text_width) / 2
+                y = rect.height * 0.9
+                rotate = 0
+            else:
+                # Fallback to center
+                x = (rect.width - text_width) / 2
+                y = rect.height / 2
+                rotate = 0
 
             page.insert_text(
-                (x, y), 
-                secret, 
-                fontsize=36, 
-                rotate=45 if position == "center" else 0, 
+                (x, y),
+                secret,
+                fontsize=font_size,
+                rotate=rotate,
                 color=(0.7, 0.7, 0.7),  # light gray
                 render_mode=2,  # fill + stroke
-                fontname="helv",
-                #align=align,
-                #opacity=0.3
+                fontname=font_name,
+                # align=1,  # Optional: Not used with absolute positioning
+                # opacity=0.3
             )
-            #print(x, y)
 
         out = io.BytesIO()
         pdf.save(out, deflate=True)
