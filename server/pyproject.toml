@@ -25,7 +25,10 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
-    "requests>=2.31"
+    "requests>=2.31",
+    "schemathesis==4.3.0",
+    "hypothesis>=6.89.0",
+    "python-dotenv>=1.0.1"
 ]
 
 [tool.pytest.ini_options]

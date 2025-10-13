@@ -1,0 +1,192 @@
+openapi: 3.0.0
+info:
+  title: Tatou API (minimal spec for fuzz)
+  version: "1.0"
+servers:
+  - url: http://localhost:5000
+paths:
+  /healthz:
+    get:
+      summary: health
+      responses:
+        "200": { description: OK }
+  /create-user:
+    post:
+      summary: create user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                login: { type: string }
+                password: { type: string }
+                email: { type: string, format: email }
+              required: [login, password]
+      responses:
+        "201": { description: Created }
+        "400": { description: Bad Request }
+  /login:
+    post:
+      summary: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                password: { type: string }
+              required: [email, password]
+      responses:
+        "200": { description: OK }
+        "401": { description: Unauthorized }
+  /get-watermarking-methods:
+    get:
+      summary: list watermark methods
+      responses:
+        "200": { description: OK }
+  /get-version/{link}:
+    get:
+      summary: get version file
+      parameters:
+        - name: link
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: FILE }
+  /static/{file_name}:
+    get:
+      summary: static file
+      parameters:
+        - name: file_name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: FILE }
+  /upload-document:
+    post:
+      summary: upload document
+      requestBody:
+        required: true
+        content:
+          application/pdf: {}
+      responses:
+        "201": { description: Uploaded }
+  /list-documents:
+    get:
+      summary: list documents
+      responses:
+        "200": { description: OK }
+  /delete-document/{document_id}:
+    delete:
+      summary: delete document
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: Deleted }
+  /get-document/{document_id}:
+    get:
+      summary: get document
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: FILE }
+  /list-versions/{document_id}:
+    get:
+      summary: list versions for document
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200": { description: OK }
+  /list-all-versions:
+    get:
+      summary: list all versions
+      responses:
+        "200": { description: OK }
+  /create-watermark/{document_id}:
+    post:
+      summary: create watermark for document
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method: { type: string }
+                position: { type: string }
+                key: { type: string }
+                secret: { type: string }
+                intended_for: { type: string }
+              required: [method]
+      responses:
+        "201": { description: Created }
+  /read-watermark/{document_id}:
+    post:
+      summary: read watermark
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                method: { type: string }
+                position: { type: string }
+                key: { type: string }
+              required: [method, key]
+      responses:
+        "200": { description: OK }
+  /rmap-initiate:
+    post:
+      summary: rmap initiate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payload: { type: string }
+              required: [payload]
+      responses:
+        "200": { description: OK }
+  /rmap-get-link:
+    post:
+      summary: rmap get link
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payload: { type: string }
+              required: [payload]
+      responses:
+        "200": { description: OK }
+
