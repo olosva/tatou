@@ -32,3 +32,26 @@ def _load_create_app():
 
 create_app = _load_create_app()
 del _load_create_app
+
+# --- BEGIN compat: expose server.src.wm_encrypted for tests/patch ---
+import sys, types, importlib
+
+# Skapa/återanvänd submodulen 'server.src'
+_src_mod_name = "server.src"
+src_mod = sys.modules.get(_src_mod_name)
+if src_mod is None:
+    src_mod = types.ModuleType(_src_mod_name)
+    sys.modules[_src_mod_name] = src_mod
+    # exponera som attribut på paketet 'server'
+    setattr(sys.modules[__name__], "src", src_mod)
+
+# Binda 'server.src.wm_encrypted' till den riktiga modulen
+try:
+    real = importlib.import_module("wm_encrypted")      # fungerar då /app/src finns på PYTHONPATH
+except ModuleNotFoundError:
+    real = importlib.import_module("src.wm_encrypted")  # fallback
+
+sys.modules["server.src.wm_encrypted"] = real
+setattr(src_mod, "wm_encrypted", real)
+# --- END compat ---
+
