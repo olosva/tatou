@@ -83,3 +83,26 @@ CREATE TABLE IF NOT EXISTS `Versions` (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-------------------------------------------------------------------------------
+-- ADDITIONS (behåller allt ovan; nedan gör vi kolumner/keys kompatibla
+-- med servern och underlättar framtida migrationer)
+-------------------------------------------------------------------------------
+
+-- Gör login unikt (servern förväntar sig att login inte krockar)
+ALTER TABLE `Users`
+  ADD UNIQUE KEY `uq_users_login` (`login`);
+
+-- Lagra crypto-parametrar som binärdata (servern kan läsa både BLOB och Base64)
+-- och öka path-längden så den matchar Documents.path
+ALTER TABLE `Versions`
+  MODIFY COLUMN `iv`   BLOB NULL,
+  MODIFY COLUMN `tag`  BLOB NULL,
+  MODIFY COLUMN `salt` BLOB NULL,
+  MODIFY COLUMN `path` VARCHAR(1024) NOT NULL;
+
+-- (Valfritt) lägg till skapandetid för versions – bra för listning/sortering
+ALTER TABLE `Versions`
+  ADD COLUMN IF NOT EXISTS `creation` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+-- Index som matchar vanligaste queryn i servern (documentid + method)
+CREATE INDEX IF NOT EXISTS `ix_versions_doc_method` ON `Versions` (`documentid`, `method`, `id`);
