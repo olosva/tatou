@@ -1,5 +1,6 @@
 import os
 import io
+import base64
 import hashlib
 import datetime as dt
 from pathlib import Path
@@ -15,20 +16,25 @@ from pypdf.errors import PdfReadError
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 import sys, types
+
+# imghdr togs bort i Python 3.13 – skapa en minimal stub om det saknas
 try:
     import imghdr  # finns på <=3.12
 except Exception:
     if sys.version_info >= (3, 13) and "imghdr" not in sys.modules:
         _im = types.ModuleType("imghdr")
+
         def what(file, h=None):  # minimalistisk stub
             return None
+
         _im.what = what
         sys.modules["imghdr"] = _im
-        
+
+# RMAP – håll appen körbar även om paketet saknas
 try:
     from rmap.identity_manager import IdentityManager
     from rmap.rmap import RMAP
-except Exception as _e:
+except Exception:
     IdentityManager = None
     RMAP = None
 
@@ -43,7 +49,36 @@ except Exception:  # dill is optional
 import watermarking_utils as WMUtils
 from watermarking_method import WatermarkingMethod
 from watermarking_utils import METHODS, apply_watermark, read_watermark, explore_pdf, is_watermarking_applicable, get_method
+
 active_sessions = {}
+
+
+# --- Helpers för säkert lagringsformat av crypto-parametrar ---
+def _to_b64_if_bytes(x):
+    """Returnera Base64-sträng om x är bytes/bytearray/memoryview, annars x."""
+    if isinstance(x, (bytes, bytearray, memoryview)):
+        return base64.b64encode(bytes(x)).decode("ascii")
+    return x
+
+
+def _from_db_blob_or_b64(x):
+    """Konvertera DB-fält (BLOB/bytes/base64-sträng) till rå bytes för crypto."""
+    if x is None:
+        return None
+    if isinstance(x, memoryview):
+        x = x.tobytes()
+    if isinstance(x, (bytes, bytearray)):
+        return bytes(x)
+    if isinstance(x, str):
+        # Försök base64-dekoda, annars antag UTF-8
+        try:
+            return base64.b64decode(x)
+        except Exception:
+            return x.encode("utf-8", "ignore")
+    try:
+        return bytes(x)
+    except Exception:
+        return None
 
 
 def create_app():
@@ -60,29 +95,29 @@ def create_app():
     app.config["DB_PORT"] = int(os.environ.get("DB_PORT", "3306"))
     app.config["DB_NAME"] = os.environ.get("DB_NAME", "tatou")
     app.config["STORAGE_DIR"].mkdir(parents=True, exist_ok=True)
-    
-    #fixa path till keys
-    BASE_DIR = Path(__file__).parent.resolve()
 
+    # Fixa path till keys
+    BASE_DIR = Path(__file__).parent.resolve()
     client_keys_dir = BASE_DIR / "pki"
     server_public_key_path = BASE_DIR / "pki" / "Group_20.asc"
     server_private_key_path = BASE_DIR / "server_private_key" / "private_key.asc"
-    #remove passphrase from git
+    # TODO: flytta passfras till ENV i prod
     server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
-    
-    #client_keys_dir = 'pki/'
-    #server_public_key_path = 'pki/Group_20.asc'
-    #server_private_key_path = 'server_private_key/private_key.asc'
-    #server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
-    #
-    identity_manager = IdentityManager(client_keys_dir,server_public_key_path,server_private_key_path,server_private_key_passphrase)
 
-    rmap = RMAP(identity_manager)
-
+    identity_manager = None
+    rmap = None
+    if IdentityManager and RMAP:
+        identity_manager = IdentityManager(
+            client_keys_dir,
+            server_public_key_path,
+            server_private_key_path,
+            server_private_key_passphrase
+        )
+        rmap = RMAP(identity_manager)
 
     # --- DB engine only (no Table metadata) ---
     def db_url() -> str:
-    # Test/override: om någon av dessa env-variabler finns, använd den
+        # Test/override: om någon av dessa env-variabler finns, använd den
         override = (
             os.environ.get("DB_URL")
             or os.environ.get("DATABASE_URL")
@@ -91,13 +126,11 @@ def create_app():
         if override:
             return override
 
-    # Standard: MySQL i Docker
+        # Standard: MySQL i Docker
         return (
             f"mysql+pymysql://{app.config['DB_USER']}:{app.config['DB_PASSWORD']}"
             f"@{app.config['DB_HOST']}:{app.config['DB_PORT']}/{app.config['DB_NAME']}?charset=utf8mb4"
         )
-
-
 
     def get_engine():
         eng = app.config.get("_ENGINE")
@@ -117,31 +150,22 @@ def create_app():
         @wraps(f)
         def wrapper(*args, **kwargs):
             auth = request.headers.get("Authorization", "")
-            #print(auth)
             if not auth.startswith("Bearer "):
                 return _auth_error("Missing or invalid Authorization header")
             token = auth.split(" ", 1)[1].strip()
             try:
                 data = _serializer().loads(token, max_age=app.config["TOKEN_TTL_SECONDS"])
-                #print(data)
-                #print("rad 76")
-                #extract sessionID from the token
                 session_id = data["session_id"]
-                #check that the sessionID is in the active sessions
                 if session_id not in active_sessions:
                     return _auth_error("Invalid session (naughty boy?)")
             except SignatureExpired:
                 return _auth_error("Token expired")
             except BadSignature:
                 return _auth_error("Invalid token")
-            #extract user info from the active sessions using the sessionID and set g.user with the info
+
             user_data = active_sessions[session_id]
             g.user = {"id": user_data["uid"], "login": user_data["login"], "email": user_data.get("email")}
-            
-            
-            #print("kommer hit verkar bra1")
             return f(*args, **kwargs)
-        #print("kommer hit verkar bra2")
         return wrapper
 
     def _sha256_file(path: Path) -> str:
@@ -152,10 +176,10 @@ def create_app():
         return h.hexdigest()
 
     # --- Routes ---
-    
+
     @app.route("/<path:filename>")
     def static_files(filename):
-        # List of allowed files (these can be accessed by the public without security risk)
+     # List of allowed files (these can be accessed by the public without security risk)
         allowed_files = {
             "documents.html",
             "index.html",
@@ -165,12 +189,12 @@ def create_app():
         }
         if filename not in allowed_files:
             return jsonify({"error": "Access denied"}), 403
-        return app.send_static_file(filename)
+        return app.send_static_file(filename) 
 
     @app.route("/")
     def home():
         return app.send_static_file("index.html")
-    
+
     @app.get("/healthz")
     def healthz():
         try:
@@ -189,46 +213,38 @@ def create_app():
         email = (payload.get("email") or "").strip().lower()
         login = (payload.get("login") or "").strip()
         password = payload.get("password") or ""
-        #creates a random uid instead of autoincrement to avoid enumeration attacks
         uid = str(uuid.uuid4())
-        #print(email, login, password)
+
         if not email or not login or not password:
-            #print("det är här det fuckar1")
             return jsonify({"error": "email, login, and password are required"}), 400
-        #change password for easier testing CHANGE BEFORE PRODUCTION
+        # För test: min 3 tecken (ändra i prod)
         if len(password) < 3:
-            #print("det är här det fuckar2")
             return jsonify({"error": "password must be at least 8 characters"}), 400
         if "@" not in email:
-            #print("det är här det fuckar3")
             return jsonify({"error": "invalid email address"}), 400
 
         hpw = generate_password_hash(password)
 
-        # SQLAlchemy takes care to protect against SQL injection using parameterized queries
         try:
             with get_engine().begin() as conn:
-                res = conn.execute(
+                conn.execute(
                     text("INSERT INTO Users (email, hpassword, login, id) VALUES (:email, :hpw, :login, :id)"),
                     {"email": email, "hpw": hpw, "login": login, "id": uid},
                 )
-                #uid = int(res.lastrowid)
                 row = conn.execute(
                     text("SELECT id, email, login FROM Users WHERE id = :id"),
                     {"id": uid},
                 ).one()
         except IntegrityError:
-            print("det är här det fuckar4")
             app.logger.warning(f"Duplicate user: {email} / {login}")
             return jsonify({"error": "invalid input"}), 400
         except Exception as e:
-            print("det är här det fuckar5")
             app.logger.error(f"DB error: {e}")
             return jsonify({"error": "internal server error"}), 503
-        #print(row.id + " " + row.email + " " + row.login + "178")
+
         return jsonify({"id": row.id, "email": row.email, "login": row.login}), 201
 
-    # POST /api/login {login, password}
+    # POST /api/login {email, password}
     @app.post("/api/login")
     def login():
         payload = request.get_json(silent=True) or {}
@@ -253,28 +269,17 @@ def create_app():
             app.logger.warning(f"Failed login attempt for: {email}")
             return jsonify({"error": "invalid credentials"}), 401
 
-        
-        #set a session variable instead of a token
+        # sessionsbaserad token
         session_id = secrets.token_urlsafe(32)
-        #add the session to the active sessions
         active_sessions[session_id] = {"uid": row.id, "login": row.login, "email": row.email}
+        
+        
         
         #token now contains the same info as before, but with the session id
         #we can then look up the session id in the active sessions to get the user info and compare it to the u.id in the token
         token = _serializer().dumps({"session_id": session_id})
-        #print(token)
         return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
-        #print(row.id, row.login, row.email)
-        #the same toke is generated for all users every time they log in
-        
-        #token = _serializer().dumps({"uid": int(row.id), "login": row.login, "email": row.email})
-        #print(token)
-        #return jsonify({"token": token, "token_type": "bearer", "expires_in": app.config["TOKEN_TTL_SECONDS"]}), 200
 
-    # When user uploads document, do we want to give it a new name? Otherwise that name will
-    # form the foundation of the secret link (which currently is just the sha1 of the name).
-    # Somehow, we need to ensure that the link returned by create_watermark is not easily    # deducible.
-    #POST /api/upload-document  (multipart/form-data)
     @app.post("/api/upload-document")
     @require_auth
     def upload_document():
@@ -283,15 +288,30 @@ def create_app():
         file = request.files["file"]
         if not file or file.filename == "":
             return jsonify({"error": "empty filename"}), 400
-        #check that the file is a PDF
+
+        # --- PDF-validering ---
+        # Först: försök läsa som riktig PDF. Om pypdf klagar, fall back till
+        # en minimal kontroll av att filen börjar med "%PDF-".
         try:
-            pdf = PdfReader(file)
-            file.seek(0)  # reset file pointer after reading TACK CLAUDE
+            PdfReader(file)
+            file.seek(0)  # återställ pekaren efter läsning
         except PdfReadError:
-            return jsonify({"error": "invalid PDF file"}), 400
-        
+            file.seek(0)  # *viktigt*: gå till början innan vi kollar headern
+            head = file.read(5)
+            file.seek(0)
+            if not isinstance(head, (bytes, bytearray)) or not head.startswith(b"%PDF-"):
+                return jsonify({"error": "invalid PDF file"}), 400
+            app.logger.warning("PDF validation fallback: header ok, pypdf failed – accepting upload")
+        except Exception:
+            file.seek(0)
+            head = file.read(5)
+            file.seek(0)
+            if not isinstance(head, (bytes, bytearray)) or not head.startswith(b"%PDF-"):
+                return jsonify({"error": "invalid PDF file"}), 400
+            app.logger.warning("PDF validation fallback (generic): header ok – accepting upload")
+
         fname = file.filename
-        #use documentID to avoid directory traversal attacks
+        # använd dokument-ID i stället för filnamn i sökvägen
         did = str(uuid.uuid4())
 
         user_dir = app.config["STORAGE_DIR"] / "files" / g.user["login"]
@@ -302,11 +322,9 @@ def create_app():
         stored_name = f"{ts}__{fname}"
         stored_path = user_dir / stored_name
         file.save(stored_path)
-        
 
         sha_hex = _sha256_file(stored_path)
         size = stored_path.stat().st_size
-
 
         try:
             with get_engine().begin() as conn:
@@ -324,8 +342,6 @@ def create_app():
                         "id": did,
                     },
                 )
-                #print(final_name + " " + str(stored_path) + " " + str(g.user["id"]) + " " + sha_hex + " " + str(size) + " " + did)
-                #did = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
                 row = conn.execute(
                     text("""
                         SELECT id, name, creation, HEX(sha256) AS sha256_hex, size
@@ -335,7 +351,6 @@ def create_app():
                     {"id": did},
                 ).one()
         except Exception as e:
-            #print(e)
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         return jsonify({
@@ -351,8 +366,6 @@ def create_app():
     @require_auth
     def list_documents():
         try:
-            #print(int(g.user["id"]))
-            #print("kommer hit")
             with get_engine().connect() as conn:
                 rows = conn.execute(
                     text("""
@@ -374,13 +387,12 @@ def create_app():
             "size": int(r.size),
         } for r in rows]
         return jsonify({"documents": docs}), 200
-    
-    #GET /api/list-versions
+
+    # GET /api/list-versions
     @app.get("/api/list-versions")
     @app.get("/api/list-versions/<string:document_id>")
     @require_auth
     def list_versions(document_id: str | None = None):
-        # Support both path param and ?id=/ ?documentid=
         if document_id is None:
             document_id = request.args.get("id") or request.args.get("documentid")
             try:
@@ -412,8 +424,7 @@ def create_app():
             "method": r.method,
         } for r in rows]
         return jsonify({"versions": versions}), 200
-    
-    
+
     # GET /api/list-all-versions
     @app.get("/api/list-all-versions")
     @require_auth
@@ -428,30 +439,25 @@ def create_app():
                         JOIN Versions v ON d.id = v.documentid
                         WHERE u.login = :glogin
                     """),
-                    #FIXME so that it uses the user id instead of login
                     {"glogin": str(g.user["login"])},
                 ).all()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         versions = [{
-            "id": int(r.id),
-            "documentid": int(r.documentid),
+            "id": str(r.id),
+            "documentid": str(r.documentid),
             "link": r.link,
             "intended_for": r.intended_for,
             "method": r.method,
         } for r in rows]
         return jsonify({"versions": versions}), 200
-    
-    # GET /api/get-document or /api/get-document/<id>  → returns the PDF (inline)
+
+    # GET /api/get-document eller /api/get-document/<id>  → returnerar PDF inline
     @app.get("/api/get-document")
     @app.get("/api/get-document/<string:document_id>")
     @require_auth
     def get_document(document_id: str | None = None):
-        
-        #print(document_id)
-        #print("kommer hit")
-        # Support both path param and ?id=/ ?documentid=
         if document_id is None:
             document_id = request.args.get("id") or request.args.get("documentid")
             try:
@@ -473,40 +479,34 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
-        # Don’t leak whether a doc exists for another user
         if not row:
             return jsonify({"error": "document not found"}), 404
 
         file_path = Path(row.path)
-
-        # Basic safety: ensure path is inside STORAGE_DIR and exists
         try:
             file_path.resolve().relative_to(app.config["STORAGE_DIR"].resolve())
         except Exception:
-            # Path looks suspicious or outside storage
             return jsonify({"error": "document path invalid"}), 500
 
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
 
-        # Serve inline with caching hints + ETag based on stored sha256
         resp = send_file(
             file_path,
             mimetype="application/pdf",
             as_attachment=False,
             download_name=row.name if row.name.lower().endswith(".pdf") else f"{row.name}.pdf",
-            conditional=True,   # enables 304 if If-Modified-Since/Range handling
+            conditional=True,
             max_age=0,
             last_modified=file_path.stat().st_mtime,
         )
-        # Strong validator
         if isinstance(row.sha256_hex, str) and row.sha256_hex:
             resp.set_etag(row.sha256_hex.lower())
 
         resp.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
         return resp
-    
-    # GET /api/get-version/<link>  → returns the watermarked PDF (inline)
+
+    # GET /api/get-version/<link>  → returnerar vattenmärkt PDF inline
     @app.get("/api/get-version/<link>")
     def get_version(link: str):
         try:
@@ -524,17 +524,13 @@ def create_app():
             app.logger.error(f"DB error: {e}")
             return jsonify({"error": "internal server error"}), 503
 
-        # Don’t leak whether a doc exists for another user
         if not row:
             return jsonify({"error": "document not found"}), 404
 
         file_path = Path(row.path)
-
-        # Basic safety: ensure path is inside STORAGE_DIR and exists
         try:
             file_path.resolve().relative_to(app.config["STORAGE_DIR"].resolve())
         except Exception:
-            # Path looks suspicious or outside storage
             return jsonify({"error": "document path invalid"}), 500
 
         if not file_path.exists():
@@ -543,28 +539,25 @@ def create_app():
         if not file_path.name.lower().endswith(".pdf"):
             return jsonify({"error": "invalid file type"}), 400
 
-        # Serve inline with caching hints + ETag based on stored sha256
         resp = send_file(
             file_path,
             mimetype="application/pdf",
             as_attachment=False,
             download_name=row.link if row.link.lower().endswith(".pdf") else f"{row.link}.pdf",
-            conditional=True,   # enables 304 if If-Modified-Since/Range handling
+            conditional=True,
             max_age=0,
             last_modified=file_path.stat().st_mtime,
         )
-
         resp.headers["Cache-Control"] = "private, max-age=0"
         return resp
-    
-    # Helper: resolve path safely under STORAGE_DIR (handles absolute/relative)
+
+    # Helper: säkert resolvera en path under STORAGE_DIR
     def _safe_resolve_under_storage(p: str, storage_root: Path) -> Path:
         storage_root = storage_root.resolve()
         fp = Path(p)
         if not fp.is_absolute():
             fp = storage_root / fp
         fp = fp.resolve()
-        # Python 3.12 has is_relative_to on Path
         if hasattr(fp, "is_relative_to"):
             if not fp.is_relative_to(storage_root):
                 raise RuntimeError(f"path {fp} escapes storage root {storage_root}")
@@ -575,13 +568,11 @@ def create_app():
                 raise RuntimeError(f"path {fp} escapes storage root {storage_root}")
         return fp
 
-    # DELETE /api/delete-document  (and variants)
-    @app.route("/api/delete-document", methods=["DELETE", "POST"])  # POST supported for convenience
+    # DELETE /api/delete-document
+    @app.route("/api/delete-document", methods=["DELETE", "POST"])
     @app.route("/api/delete-document/<document_id>", methods=["DELETE"])
     @require_auth
     def delete_document(document_id: str | None = None):
-        # accept id from path, query (?id= / ?documentid=), or JSON body on POST
-        #print(document_id)
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -593,23 +584,18 @@ def create_app():
         except (TypeError, ValueError):
             return jsonify({"error": "document id required"}), 400
 
-        # Fetch the document (enforce ownership)
-        #fixed sql injection vulnerability here by using parameterized queries
         try:
             with get_engine().connect() as conn:
-                print("här det fuckar")
                 row = conn.execute(
-                    text("SELECT * FROM Documents WHERE id =  :id AND ownerid = :uid LIMIT 1"),
+                    text("SELECT * FROM Documents WHERE id = :id AND ownerid = :uid LIMIT 1"),
                     {"id": doc_id, "uid": g.user["id"]},
-                ).one()
+                ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
-            # Don’t reveal others’ docs—just say not found
             return jsonify({"error": "document not found"}), 404
 
-        # Resolve and delete file (best effort)
         storage_root = Path(app.config["STORAGE_DIR"])
         file_deleted = False
         file_missing = False
@@ -626,16 +612,11 @@ def create_app():
             else:
                 file_missing = True
         except RuntimeError as e:
-            # Path escapes storage root; refuse to touch the file
             delete_error = str(e)
             app.logger.error("Path safety check failed for doc id=%s: %s", row.id, e)
 
-        # Delete DB row (will cascade to Version if FK has ON DELETE CASCADE)
         try:
             with get_engine().begin() as conn:
-                # If your schema does NOT have ON DELETE CASCADE on Version.documentid,
-                # uncomment the next line first:
-                # conn.execute(text("DELETE FROM Version WHERE documentid = :id"), {"id": doc_id})
                 conn.execute(text("DELETE FROM Documents WHERE id = :id"), {"id": doc_id})
         except Exception as e:
             return jsonify({"error": f"database error during delete: {str(e)}"}), 503
@@ -645,18 +626,17 @@ def create_app():
             "id": doc_id,
             "file_deleted": file_deleted,
             "file_missing": file_missing,
-            "note": delete_error,   # null/omitted if everything was fine
+            "note": delete_error,
         }), 200
-        
-    #seperate function to allow easier calling from both RMAP and the internal endpoint
-    #this way means we can still have the require_auth decorator on the internal endpoint, but still call it as a normal function from RMAP
-    def create_internal_watermark(uid: str,
-                                  document_id: str | None = None,
-                                  link_token: str | None = None,
-                                  **kwargs #neat keyword :)
-                                  ):
+
+    def create_internal_watermark(
+        uid: str,
+        document_id: str | None = None,
+        link_token: str | None = None,
+        **kwargs
+    ):
         payload = kwargs
-        print("kommer hit med rmap-get-link")
+        app.logger.debug("create_internal_watermark called")
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -666,33 +646,23 @@ def create_app():
         try:
             doc_id = document_id
         except (TypeError, ValueError):
-            print("644")
             return jsonify({"error": "document id required"}), 400
 
-        #payload = request.get_json(silent=True) or {}
-        # allow a couple of aliases for convenience
-        #if the method gets called from RMAP it might not have a method in the payload so we select the best one as default
-        
-        method = payload.get("method")   
-        #having a really hard time figuring out how to get the parameters required for the watermarking from RMAP without i looking like shit
+        method = payload.get("method")
         intended_for = payload.get("intended_for")
         position = payload.get("position")
         secret = payload.get("secret")
         key = payload.get("key")
-         # validate input
+
+        # validate input
         try:
             doc_id = str(doc_id)
         except (TypeError, ValueError):
-            print("661")
-            return jsonify({"error": "document_id (int) is required"}), 400
+            return jsonify({"error": "document_id (str) is required"}), 400
         if not method or not intended_for or not isinstance(secret, str) or not isinstance(key, str):
-            print("664")
             return jsonify({"error": "method, intended_for, secret, and key are required"}), 400
 
         # lookup the document; enforce ownership
-        #checks that the document belongs to the user via ownerID
-        print("669")
-        print(doc_id)
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -705,11 +675,10 @@ def create_app():
                     {"id": doc_id, "uid": uid},
                 ).first()
         except Exception as e:
-            print("e1", e)
+            app.logger.error("DB error in create_internal_watermark lookup: %s", e)
             return jsonify({"error": f"database error: {str(e)}"}), 503
 
         if not row:
-            print("687")
             return jsonify({"error": "document not found"}), 404
 
         # resolve path safely under STORAGE_DIR
@@ -721,15 +690,12 @@ def create_app():
         try:
             file_path.relative_to(storage_root)
         except ValueError:
-            print("699")
             return jsonify({"error": "document path invalid"}), 500
         if not file_path.exists():
-            print("701")
             return jsonify({"error": "file missing on disk"}), 410
 
         # check watermark applicability
         try:
-            #print("kommer hit 673")
             applicable = WMUtils.is_watermarking_applicable(
                 method=method,
                 pdf=str(file_path),
@@ -738,11 +704,9 @@ def create_app():
             if applicable is False:
                 return jsonify({"error": "watermarking method not applicable"}), 400
         except Exception as e:
-            print("716")
-            print(e)
             return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
 
-        # apply watermark → bytes
+        # apply watermark → bytes (+ optional crypto params)
         try:
             result = WMUtils.apply_watermark(
                 pdf=str(file_path),
@@ -762,26 +726,25 @@ def create_app():
                     result["pdf_bytes"] = result["data"]
 
             wm_bytes = result["pdf_bytes"]
-            iv = result.get("nonce")
+            iv = result.get("nonce") or result.get("iv")
             tag = result.get("tag")
             salt = result.get("salt")
-            secret = result.get("secret")
+            secret_out = result.get("secret", secret)
 
-            #print("kommer hit 703")
             if not isinstance(wm_bytes, (bytes, bytearray)) or len(wm_bytes) == 0:
-                print("e2")
                 return jsonify({"error": "watermarking produced no output"}), 500
         except Exception as e:
-            print("e3", e)
+            app.logger.error("watermarking failed: %s", e)
             return jsonify({"error": f"watermarking failed: {e}"}), 500
 
-        # build destination file name: "<original_name>__<intended_to>.pdf"
+        # --- MAKE FILENAME UNIQUE (avoid overwriting previous versions) ---
         base_name = Path(row.name or file_path.name).stem
         intended_slug = secure_filename(intended_for)
         dest_dir = file_path.parent / "watermarks"
         dest_dir.mkdir(parents=True, exist_ok=True)
 
-        candidate = f"{base_name}__{intended_slug}.pdf"
+        unique_stamp = dt.datetime.utcnow().strftime("%Y%m%d%H%M%S%f") + "-" + secrets.token_hex(3)
+        candidate = f"{base_name}__{intended_slug}__{unique_stamp}.pdf"
         dest_path = dest_dir / candidate
 
         # write bytes
@@ -789,48 +752,63 @@ def create_app():
             with dest_path.open("wb") as f:
                 f.write(wm_bytes)
         except Exception as e:
-            print("e4")
             return jsonify({"error": f"failed to write watermarked file: {e}"}), 500
-        
+
         vid = str(uuid.uuid4())
-        
-        #check if link_token is provided in the payload via RMAP else do as normal
+
+        # --- MAKE LINK UNIQUE (avoid unique constraint violation on Versions.link) ---
+        # If link_token is provided (e.g., RMAP flow), keep it.
+        # Otherwise, make a random, unguessable token.
+        def _new_link_token():
+            rnd = secrets.token_hex(8)
+            return hashlib.sha1(f"{candidate}:{rnd}".encode("utf-8")).hexdigest()
+
         if link_token is None:
-            link_token = hashlib.sha1(candidate.encode("utf-8")).hexdigest()
-        #print(doc_id, link_token, intended_for, secret, method, position, dest_path)
-        print(link_token)
-        print(uid,document_id , "767")
-        try:
-            with get_engine().begin() as conn:
-                conn.execute(
-                    text("""
-                                INSERT INTO Versions (id, documentid, link, intended_for, secret, iv, tag, salt, method, position, path)
-                                VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
-                            """),
-                    {
-                        "id": vid,
-                        "documentid": doc_id,
-                        "link": link_token,
-                        "intended_for": intended_for,
-                        "secret": secret,
-                        "iv": iv,
-                        "tag": tag,
-                        "salt": salt,
-                        "method": method,
-                        "position": position or "",
-                        "path": dest_path
-                    },
-                )
-                # vid = int(conn.execute(text("SELECT LAST_INSERT_ID()")).scalar())
-        except Exception as e:
-            # best-effort cleanup if DB insert fails
+            link_token = _new_link_token()
+
+        # Insert with small retry loop if link happens to collide
+        from sqlalchemy.exc import IntegrityError as SAIntegrityError
+        max_tries = 3
+        for attempt in range(max_tries):
             try:
-                dest_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-            print("746")
-            print(e)
-            return jsonify({"error": f"database error during version insert: {e}"}), 503
+                with get_engine().begin() as conn:
+                    conn.execute(
+                        text("""
+                            INSERT INTO Versions (id, documentid, link, intended_for, secret, iv, tag, salt, method, position, path)
+                            VALUES (:id, :documentid, :link, :intended_for, :secret, :iv, :tag, :salt, :method, :position, :path)
+                        """),
+                        {
+                            "id": vid,
+                            "documentid": doc_id,
+                            "link": link_token,
+                            "intended_for": intended_for,
+                            "secret": secret_out,
+                            "iv": iv,
+                            "tag": tag,
+                            "salt": salt,
+                            "method": method,
+                            "position": position or "",
+                            "path": str(dest_path),
+                        },
+                    )
+                break  # success
+            except SAIntegrityError as e:
+                # If duplicate link, regenerate and retry
+                if "Duplicate entry" in str(e) and "uq_Versions_link" in str(e) and attempt < (max_tries - 1):
+                    link_token = _new_link_token()
+                    continue
+                # cleanup on failure
+                try:
+                    dest_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return jsonify({"error": f"database error during version insert: {e}"}), 503
+            except Exception as e:
+                try:
+                    dest_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                return jsonify({"error": f"database error during version insert: {e}"}), 503
 
         return jsonify({
             "id": vid,
@@ -842,31 +820,25 @@ def create_app():
             "filename": candidate,
             "size": len(wm_bytes),
         }), 201
-    
-        
-       
-       
-         
-    # POST /api/create-watermark or /api/create-watermark/<id>  → create watermarked pdf and returns metadata
+
+    # POST /api/create-watermark eller /api/create-watermark/<id>
     @app.post("/api/create-watermark")
     @app.post("/api/create-watermark/<string:document_id>")
-    @require_auth #ändrade till str
+    @require_auth
     def create_watermark(document_id: str | None = None):
-        #''', link_token: str | None = None'''
         payload = request.get_json(silent=True) or {}
         return create_internal_watermark(
             document_id=document_id,
-            uid = g.user["id"],
+            uid=g.user["id"],
             **payload
         )
-        
-        
+
     @app.post("/api/load-plugin")
     @require_auth
     def load_plugin():
         """
-        Load a serialized Python class implementing WatermarkingMethod from
-        STORAGE_DIR/files/plugins/<filename>.{pkl|dill} and register it in wm_mod.METHODS.
+        Ladda en serialiserad klass som implementerar WatermarkingMethod från
+        STORAGE_DIR/files/plugins/<filename>.{pkl|dill} och registrera den i wm_mod.METHODS.
         Body: { "filename": "MyMethod.pkl", "overwrite": false }
         """
         payload = request.get_json(silent=True) or {}
@@ -876,7 +848,6 @@ def create_app():
         if not filename:
             return jsonify({"error": "filename is required"}), 400
 
-        # Locate the plugin in /storage/files/plugins (relative to STORAGE_DIR)
         storage_root = Path(app.config["STORAGE_DIR"])
         plugins_dir = storage_root / "files" / "plugins"
         try:
@@ -886,27 +857,23 @@ def create_app():
             return jsonify({"error": f"plugin path error: {e}"}), 500
 
         if not plugin_path.exists():
-            return jsonify({"error": f"plugin file not found: {safe}"}), 404
+            return jsonify({"error": f"plugin file not found: {filename}"}), 404
 
-        # Unpickle the object (dill if available; else std pickle)
         try:
             with plugin_path.open("rb") as f:
                 obj = _pickle.load(f)
         except Exception as e:
             return jsonify({"error": f"failed to deserialize plugin: {e}"}), 400
 
-        # Accept: class object, or instance (we'll promote instance to its class)
         if isinstance(obj, type):
             cls = obj
         else:
             cls = obj.__class__
 
-        # Determine method name for registry
         method_name = getattr(cls, "name", getattr(cls, "__name__", None))
         if not method_name or not isinstance(method_name, str):
             return jsonify({"error": "plugin class must define a readable name (class.__name__ or .name)"}), 400
 
-        # Validate interface: either subclass of WatermarkingMethod or duck-typing
         has_api = all(hasattr(cls, attr) for attr in ("add_watermark", "read_secret"))
         if WatermarkingMethod is not None:
             is_ok = issubclass(cls, WatermarkingMethod) and has_api
@@ -915,7 +882,6 @@ def create_app():
         if not is_ok:
             return jsonify({"error": "plugin does not implement WatermarkingMethod API (add_watermark/read_secret)"}), 400
 
-        # Register the class (not an instance) so you can instantiate as needed later
         WMUtils.METHODS[method_name] = cls()
 
         return jsonify({
@@ -926,21 +892,19 @@ def create_app():
             "methods_count": len(WMUtils.METHODS)
         }), 201
 
-    # GET /api/get-watermarking-methods -> {"methods":[{"name":..., "description":...}, ...], "count":N}
+    # GET /api/get-watermarking-methods
     @app.get("/api/get-watermarking-methods")
     def get_watermarking_methods():
         methods = []
-
         for m in WMUtils.METHODS:
             methods.append({"name": m, "description": WMUtils.get_method(m).get_usage()})
-
         return jsonify({"methods": methods, "count": len(methods)}), 200
-        
+
     # POST /api/read-watermark
     @app.post("/api/read-watermark")
     @app.post("/api/read-watermark/<string:document_id>")
     @require_auth
-    def read_watermark(document_id: str | None = None):
+    def read_watermark_api(document_id: str | None = None):
         if not document_id:
             document_id = (
                 request.args.get("id")
@@ -953,13 +917,10 @@ def create_app():
             return jsonify({"error": "document id required"}), 400
 
         payload = request.get_json(silent=True) or {}
-        # allow a couple of aliases for convenience
-        
         method = payload.get("method")
         position = payload.get("position") or None
         key = payload.get("key")
 
-        # validate input
         try:
             doc_id = str(doc_id)
         except (TypeError, ValueError):
@@ -967,7 +928,7 @@ def create_app():
         if not method or not isinstance(key, str):
             return jsonify({"error": "method, and key are required"}), 400
 
-        # lookup the document; FIXME enforce ownership
+        # Hämta rätt version för just den metoden
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -975,10 +936,13 @@ def create_app():
                         SELECT v.documentid, v.path, v.method, v.salt, v.tag, v.iv
                         FROM Versions v
                         JOIN Documents d ON v.documentid = d.id
-                        WHERE v.documentid = :id AND d.ownerid = :uid
+                        WHERE v.documentid = :id
+                          AND d.ownerid = :uid
+                          AND v.method = :method
+                        ORDER BY v.id DESC
                         LIMIT 1
                     """),
-                    {"id": doc_id, "uid": g.user["id"]},
+                    {"id": doc_id, "uid": g.user["id"], "method": method},
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
@@ -986,7 +950,6 @@ def create_app():
         if not row:
             return jsonify({"error": "document not found"}), 404
 
-            # resolve path safely under STORAGE_DIR
         storage_root = Path(app.config["STORAGE_DIR"]).resolve()
         file_path = Path(row.path)
         if not file_path.is_absolute():
@@ -999,92 +962,81 @@ def create_app():
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
 
-        #get the parameters from the document needed to read the watermark
+        # Normalisera DB-värden till råbytes
+        iv_b   = _from_db_blob_or_b64(row.iv)
+        tag_b  = _from_db_blob_or_b64(row.tag)
+        salt_b = _from_db_blob_or_b64(row.salt)
 
-        secret = None
         try:
             secret = WMUtils.read_watermark(
                 method=method,
                 pdf=str(file_path),
                 key=key,
                 position=position,
-                iv=row.iv,
-                tag=row.tag,
-                salt=row.salt
+                iv=iv_b,
+                tag=tag_b,
+                salt=salt_b
             )
         except Exception as e:
             return jsonify({"error": f"Error when attempting to read watermark: {e}"}), 400
+
         return jsonify({
             "documentid": doc_id,
             "secret": secret,
             "method": method,
             "position": position
         }), 201
-        
+
+    # --- RMAP endpoints (frivilliga) ---
     @app.post("/api/rmap-initiate")
-    #@require_auth
     def initiate_rmap():
-        # Get raw POST data
-        
-        #print(payload)
-        if request.is_json: 
+        if request.is_json:
             payload = request.get_json()
-            print(payload)
         else:
-        # Get raw text/binary data
             payload = request.get_data(as_text=True)
-            
-            
+
+        if not rmap:
+            return jsonify({"error": "RMAP not available on this server"}), 501
+
         result = rmap.handle_message1(payload)
-        print(result)
-        
         return jsonify(result.get("payload")), 200
-    
-    
+
     @app.post("/api/rmap-get-link")
-    #@require_auth
     def rmap_get_link():
-        # Get raw POST data
-        
-        #print(payload)
-        if request.is_json: 
+        if request.is_json:
             payload = request.get_json()
-            #print(payload)
         else:
-        # Get raw text/binary data
             payload = request.get_data(as_text=True)
-            
-        #id to the pdf on admin@admin.admin account that other groups can watermark    
+
+        if not rmap:
+            return jsonify({"error": "RMAP not available on this server"}), 501
+
+        # Id till admin-dokument som andra kan vattenmärka
         admin_uid = '281b4cb1-abdb-4a61-ad33-9a78cbab12b7'
         pdf_id = '619f9c58-6e40-40d2-ae59-07929e8de44b'
         result = rmap.handle_message2(payload)
-        
-        #we can now create the watermark with the parameters received from RMAP
+
+        # Skapar en vattenmärkt version och återanvänder RMAP-länken
         create_internal_watermark(
-                         uid=admin_uid,
-                         document_id=pdf_id,
-                         link_token=result.get("result"),
-                         method="wm-encrypted",
-                         intended_for="rmap_recipient",
-                         secret="watermarked",
-                         key="keysecret",
-                         position = "none")
-        
-        
-        #use get-version endpoint with the newly created wm pdf in order
-        #for the user to get their pdf 
-        #link = {'http://127.0.0.1:5000/api/get-version/'+result.get("result")}
-        #return jsonify({"link" : link}), 200
+            uid=admin_uid,
+            document_id=pdf_id,
+            link_token=result.get("result"),
+            method="wm-encrypted",
+            intended_for="rmap_recipient",
+            secret="watermarked",
+            key="keysecret",
+            position="none"
+        )
+
         link_url = url_for("get_version", link=result.get("result"), _external=True)
         return jsonify({"link": link_url}), 200
 
-    
     return app
-    
+
+
 # WSGI entrypoint
 app = create_app()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port)
-

@@ -67,139 +67,55 @@ class wm_encrypted(WatermarkingMethod):
         }
     
     
-   # def read_secret(self, pdf, key, position, iv, tag, salt):
-        #print("kommer in read_secret")
-       
-        salt = base64.b64decode(salt)
-        iv = base64.b64decode(iv)
-        tag = base64.b64decode(tag)
-        #x,y0 = get_coordinates(position, rect)
-        print(iv, tag, salt)
-        derived_key, _ = derive_key(key, salt)
-        
-        pdf_bytes = load_pdf_bytes(pdf)
-
-        
-        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        
-    
-        if doc.page_count == 0:
-            raise ValueError("PDF has no pages")
-
-        # Get coordinates where text was embedded
-        x, y0 = get_coordinates(position, doc[0].rect)
-        line_height = 7
-
-        # Extract text from known positions
-        chunks = []
-        for page_num, page in enumerate(doc):
-            chunk_index = 0
-            while True:
-                y = y0 + chunk_index * line_height
-
-                # Ensure rectangle stays within page boundaries
-                rect = fitz.Rect(
-                    max(x - 5, 0),
-                    max(y - 3, 0),
-                    min(x + 400, page.rect.width),
-                    min(y + 20, page.rect.height)  # slightly taller to catch font
-                )
-
-                # Try extracting text from the rectangle
-                try:
-                    text = page.get_textbox(rect)
-
-                    # fallback: extract text via dictionary
-                    if not text.strip():
-                        text_dict = page.get_text("dict", clip=rect)
-                        text = ""
-                        for block in text_dict.get("blocks", []):
-                            if block.get("type") == 0:  # text block
-                                for line in block.get("lines", []):
-                                    for span in line.get("spans", []):
-                                        text += span.get("text", "")
-
-                    print(f"Page {page_num}, chunk_index {chunk_index}, extracted: {repr(text)}")
-
-                    if not text.strip():
-                        break  # No more chunks on this page
-
-                    # Clean extracted text to match base64 chars
-                    clean_chunk = ''.join(c for c in text if c.isalnum() or c in '+/=')
-
-                    # Accept chunks that are at least 50 chars (allows small extraction variance)
-                    if len(clean_chunk) >= 50:
-                        chunks.append(clean_chunk[:64])
-                        chunk_index += 1
-                    else:
-                        break  # likely no more hidden text
-
-                except Exception as e:
-                    print(f"Error reading chunk at index {chunk_index} on page {page_num}: {e}")
-                    break
-
-        doc.close()
-
-        if not chunks:
-            
-            raise ValueError("No hidden chunks found at expected positions")
-
-        # Reassemble base64 data
-        encrypted_secret = ''.join(chunks)
-
-        try:
-            # Decode and decrypt
-            #encrypted_secret = base64.b64decode(encrypted_data_b64)
-            
-            
-            encrypted_secret_bytes = base64.b64decode(encrypted_secret)
-            #encrypted_secret_bytes = base64.b64decode('xbwYSY4=')
-            decrypted_secret = decrypt(encrypted_secret_bytes, derived_key, iv, tag)
-            print(decrypted_secret)
-            
-            #print(decrypted_secret)
-            return decrypted_secret
-
-        except Exception as e:
-            raise ValueError(f"Failed to decrypt secret: {str(e)}")
-
-
     def read_secret(self, pdf, key, position, iv, tag, salt):
         import base64
         import fitz  # PyMuPDF
 
-        print("Starting read_secret")
+        # --- normalisera crypto-parametrar: stöd både bytes och ev. base64-strängar ---
+        def _norm(x):
+            # bytes -> använd som är (om ASCII-base64: decoda)
+            if isinstance(x, (bytes, bytearray)):
+                try:
+                    s = x.decode("ascii")
+                    if all(c.isalnum() or c in "+/=" for c in s):
+                        return base64.b64decode(s)
+                    return bytes(x)
+                except UnicodeDecodeError:
+                    return bytes(x)
+            # str -> försök base64-dekoda, annars treat-as-bytes
+            if isinstance(x, str):
+                try:
+                    return base64.b64decode(x)
+                except Exception:
+                    return x.encode()
+            return x
 
-        # Decode crypto params
-        salt = base64.b64decode(salt)
-        iv = base64.b64decode(iv)
-        tag = base64.b64decode(tag)
+        salt = _norm(salt)
+        iv   = _norm(iv)
+        tag  = _norm(tag)
+
         derived_key, _ = derive_key(key, salt)
 
-        # Load PDF
+        # --- ladda PDF ---
         pdf_bytes = load_pdf_bytes(pdf)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
         if doc.page_count == 0:
             raise ValueError("PDF has no pages")
 
-        # Get coordinates where watermark was inserted
+        # --- hämta text-chunks där hemligheten gömts ---
         x, y0 = get_coordinates(position, doc[0].rect)
-        line_height = 7  # must match add_hidden_watermark
+        line_height = 7  # måste matcha add_hidden_watermark
 
         chunks = []
-
-        for page_num, page in enumerate(doc):
+        for page in doc:
             y = y0
             while y < page.rect.height:
                 rect = fitz.Rect(
                     max(x - 5, 0),
                     max(y - 3, 0),
                     min(x + 400, page.rect.width),
-                    min(y + 20, page.rect.height)
+                    min(y + 20, page.rect.height),
                 )
-
-                # Extract text from region
                 text_dict = page.get_text("dict", clip=rect)
                 text = "".join(
                     span.get("text", "")
@@ -208,66 +124,79 @@ class wm_encrypted(WatermarkingMethod):
                     for line in block.get("lines", [])
                     for span in line.get("spans", [])
                 )
-
                 if not text.strip():
-                    break  # stop when no more text found at this Y
+                    break  # slut på chunk-raden
 
-                # Keep only base64-valid chars
-                clean_chunk = ''.join(c for c in text if c.isalnum() or c in '+/=')
-
+                # spara enbart base64-tecken
+                clean_chunk = "".join(c for c in text if c.isalnum() or c in "+/=")
                 if clean_chunk:
                     chunks.append(clean_chunk)
-                    print(f"Page {page_num}, y={y}, extracted: {clean_chunk}")
-
-                y += line_height  # move down to next expected chunk line
+                y += line_height
 
         doc.close()
 
         if not chunks:
             raise ValueError("No hidden chunks found at expected positions")
 
-        # TODO compare each chunk so that the secret is the same on all pages?
-        encrypted_secret_b64 = chunks[0]
+        # --- sätt ihop alla base64-chunks + fixa padding ---
+        b64 = "".join(chunks)
+        pad = (-len(b64)) % 4
+        if pad:
+            b64 += "=" * pad
+
         try:
-            encrypted_secret_bytes = base64.b64decode(encrypted_secret_b64)
-            decrypted_secret = decrypt(encrypted_secret_bytes, derived_key, iv, tag)
-            #print("Decrypted secret:", decrypted_secret)
-            return decrypted_secret
+            ciphertext = base64.b64decode(b64, validate=False)
+        except Exception as e:
+            raise ValueError(f"Failed to decode hidden base64: {e}")
+
+        try:
+            return decrypt(ciphertext, derived_key, iv, tag)
         except Exception as e:
             raise ValueError(f"Failed to decrypt secret: {e}")
+
         
 
 
     def add_visible_watermark(self, pdf_bytes, position, secret):
-        #print("kommer in visible")
         pdf = fitz.open(stream=pdf_bytes, filetype="pdf")
+
         for page in pdf:
             rect = page.rect
+            font_size = 36
+            font_name = "helv"
+
+            # Estimate text width
+            text_width = fitz.get_text_length(secret, fontname=font_name, fontsize=font_size)
+
             if position == "center":
-                x, y = rect.width / 2, rect.height / 2
-                align = 1  # center
+                x = (rect.width - text_width) / 2
+                y = rect.height / 2
+                rotate = 45
             elif position == "top":
-                x, y = rect.width / 2, rect.height * 0.1
-                align = 1
+                x = (rect.width - text_width) / 2
+                y = rect.height * 0.1
+                rotate = 0
             elif position == "bottom":
-                x, y = rect.width / 2, rect.height * 0.9
-                align = 1
-            else:  # fallback: center
-                x, y = rect.width / 2, rect.height / 2
-                align = 1
+                x = (rect.width - text_width) / 2
+                y = rect.height * 0.9
+                rotate = 0
+            else:
+                # Fallback to center
+                x = (rect.width - text_width) / 2
+                y = rect.height / 2
+                rotate = 0
 
             page.insert_text(
-                (x, y), 
-                secret, 
-                fontsize=36, 
-                rotate=45 if position == "center" else 0, 
+                (x, y),
+                secret,
+                fontsize=font_size,
+                rotate=rotate,
                 color=(0.7, 0.7, 0.7),  # light gray
                 render_mode=2,  # fill + stroke
-                fontname="helv",
-                #align=align,
-                #opacity=0.3
+                fontname=font_name,
+                # align=1,  # Optional: Not used with absolute positioning
+                # opacity=0.3
             )
-            #print(x, y)
 
         out = io.BytesIO()
         pdf.save(out, deflate=True)

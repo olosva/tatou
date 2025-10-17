@@ -1,3 +1,46 @@
+# --- BEGIN robust compat alias for tests that patch "server.src.*" ---
+import sys, types, importlib
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]   # .../server
+SRC_DIR   = REPO_ROOT / "src"
+
+# Säkerställ att både repo-roten (för att kunna importera paketet "server")
+# och src-katalogen (för moduler under src/) finns på sys.path.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+# 1) Importera ALLTID det riktiga paketet "server" från filsystemet.
+#    (Vi skapar INTE en dummy. Om importen misslyckas vill vi hellre se ett tydligt fel.)
+server_mod = importlib.import_module("server")
+
+# 2) Skapa eller hämta en syntetisk modul 'server.src' och exponera som attribut.
+if "server.src" in sys.modules:
+    src_alias = sys.modules["server.src"]
+else:
+    src_alias = types.ModuleType("server.src")
+    sys.modules["server.src"] = src_alias
+setattr(server_mod, "src", src_alias)
+
+# 3) Binda under-moduler som testerna patchar: 'server.src.wm_encrypted' -> verklig modul.
+def _bind(subname: str):
+    # Försök först importera direkt (tack vare SRC_DIR på sys.path), annars "src.subname"
+    try:
+        real = importlib.import_module(subname)
+    except ModuleNotFoundError:
+        real = importlib.import_module(f"src.{subname}")
+    # Registrera både som attribut och i sys.modules med full namnrymd
+    setattr(src_alias, subname, real)
+    sys.modules[f"server.src.{subname}"] = real
+
+# Lägg till de submoduler som patchas i testerna
+for name in ("wm_encrypted",):
+    _bind(name)
+# --- END robust compat alias ---
+
+
 import os
 import tempfile
 import pathlib
