@@ -1,0 +1,10 @@
+[run]
+source = server/src
+
+[report]
+include = server/src/*.py
+omit =
+    server/src/*/*        # Omit files in subdirectories
+
+[html]
+directory = htmlcov

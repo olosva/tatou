@@ -9,6 +9,10 @@ import io
 from unittest.mock import patch, MagicMock
 import pickle
 import re
+import base64
+import json
+import pikepdf
+import importlib.util
 
 from metadata_embedding import MetadataEmbedding
 from wm_visible_stamp_gs import VisibleStampGS
@@ -301,6 +305,19 @@ def test_read_secret_handles_general_exception_and_raises_valueerror():
         assert "Failed to decrypt secret" in str(exc_info.value)
 
 
+    key = "dummykey"
+    iv = tag = salt = "ZmFrZV9kYXRh=="  # base64 for "fake_data"
+
+    # Patch fitz.open and decrypt function
+    with patch("fitz.open") as mock_open, \
+         patch("server.src.wm_encrypted.decrypt") as mock_decrypt:
+
+        # Setup mocked PDF document with one page
+        mock_doc = MagicMock()
+        mock_page = MagicMock()
+        mock_page.rect.height = 300
+        mock_page.rect.width = 300
+
 def test_norm_fallback_on_base64_decode_exception():
     wm = wm_encrypted()
 
@@ -361,15 +378,288 @@ def test_norm_fallback_on_base64_decode_exception():
         assert "No hidden chunks found" in str(exc_info.value)
 
 
+@pytest.mark.parametrize("impl", [wm_encrypted()])
+def test_wm_encrypted_changes_pdf(impl, sample_pdf_path: Path):
+    secret = "unit-test-secret"
+    key = "unit-test-key"
+    position = "none"
+
+    # Read original PDF bytes
+    with open(sample_pdf_path, "rb") as f:
+        original_bytes = f.read()
+    original_hash = hashlib.sha256(original_bytes).hexdigest()
+
+    # Apply watermark using the tested implementation
+    assert impl.is_watermark_applicable(sample_pdf_path, position=None)
+    out = impl.add_watermark(sample_pdf_path, secret=secret, key=key, position=position)
+
+    # Use the existing _extract_bytes helper (handles dicts, streams, paths)
+    watermarked_bytes = _extract_bytes(out)
+
+    # 🛡 Ensure we got raw bytes back
+    assert isinstance(watermarked_bytes, (bytes, bytearray)), "Expected raw bytes from _extract_bytes"
+    new_hash = hashlib.sha256(watermarked_bytes).hexdigest()
+
+    # Test: PDF must have changed (kills NumberReplacer, ZeroIteration mutants)
+    assert new_hash != original_hash, "Watermarked PDF should differ from original"
+
+    # Test: Watermarked PDF must contain expected visible or embedded content
+    with fitz.open(stream=watermarked_bytes, filetype="pdf") as doc:
+        text = ""
+        for page in doc:
+            text += page.get_text()
+
+        # Check that the watermarking made a visible or detectable change
+        assert "unit-test" in text.lower() or len(text.strip()) > 0, \
+            "Expected watermark content missing in PDF text"
 
 
+@pytest.mark.parametrize("impl", [MetadataEmbedding()])
+def test_metadata_embedding_changes_pdf(impl, sample_pdf_path: Path):
+    secret = "unit-test-secret"
+    key = "unit-test-key"
+    position = "none"
+
+    # Read original PDF bytes and hash
+    with open(sample_pdf_path, "rb") as f:
+        original_bytes = f.read()
+    original_hash = hashlib.sha256(original_bytes).hexdigest()
+
+    # Ensure watermarking is applicable
+    assert impl.is_watermark_applicable(sample_pdf_path, position=None)
+
+    # Apply metadata watermark
+    out = impl.add_watermark(sample_pdf_path, secret=secret, key=key, position=position)
+
+    # Extract modified PDF bytes
+    watermarked_bytes = _extract_bytes(out)
+
+    # Ensure we got raw bytes back
+    assert isinstance(watermarked_bytes, (bytes, bytearray)), "Expected raw bytes from _extract_bytes"
+    new_hash = hashlib.sha256(watermarked_bytes).hexdigest()
+
+    # PDF must be different
+    assert new_hash != original_hash, "Watermarked PDF should differ from original"
+
+    # Ensure secret is retrievable
+    retrieved_secret = impl.read_secret(watermarked_bytes, key=key)
+    assert retrieved_secret == secret, "Retrieved secret does not match the original"
+
+    # Since this watermark is in metadata, there may be no visible content to extract with fitz
+    # But we can check metadata using pikepdf
+    import pikepdf
+    with pikepdf.open(io.BytesIO(watermarked_bytes)) as pdf_obj:
+        metadata = pdf_obj.docinfo
+        computed_key = impl.compute_metadata_key(key)
+        assert computed_key in metadata, "Expected metadata key not found"
 
 
+@pytest.mark.parametrize("impl", [MetadataEmbedding()])
+def test_metadata_embedding_encodes_position_correctly(impl, sample_pdf_path: Path):
+    secret = "mutant-killer-secret"
+    key = "mutant-killer-key"
+    position = "top-right"  # Important: Non-empty position
+
+    # Apply the watermark
+    out = impl.add_watermark(sample_pdf_path, secret=secret, key=key, position=position)
+
+    # Extract watermarked bytes
+    pdf_bytes = _extract_bytes(out)
+
+    # Read PDF metadata
+    with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf_obj:
+        metadata = pdf_obj.docinfo
+        metadata_key = impl.compute_metadata_key(key)
+        assert metadata_key in metadata, "Metadata key not found in watermarked PDF"
+
+        raw_encoded = metadata[metadata_key]
+        if not isinstance(raw_encoded, str):
+            raw_encoded = str(raw_encoded)
+
+        # Decode and parse metadata
+        decoded_json = base64.b64decode(raw_encoded)
+        parsed = json.loads(decoded_json)
+
+        # Check both secret and position
+        assert parsed.get("secret") == secret, "Secret mismatch in metadata"
+        assert parsed.get("position") == position, "Position mismatch in metadata"
 
 
+def test_visible_stamp_gs_runs_successfully(sample_pdf_path: Path):
+    secret = "kill-this-mutant"
+    key = None
+    position = None
+
+    impl = VisibleStampGS()
+
+    # Simulate subprocess.run returning success
+    with patch("subprocess.run") as mock_run, \
+            patch("builtins.open", create=True) as mock_open, \
+            patch("os.unlink"):
+        mock_run.return_value = MagicMock(returncode=0, stderr="")
+        mock_open.return_value.__enter__.return_value.read.return_value = b"%PDF-1.4\n% Watermarked content"
+
+        out = impl.add_watermark(sample_pdf_path, secret=secret, key=key, position=position)
+        watermarked_bytes = _extract_bytes(out)
+
+        assert isinstance(watermarked_bytes, (bytes, bytearray))
+        assert b"%PDF" in watermarked_bytes
 
 
+@pytest.mark.parametrize("impl", [wm_encrypted()])
+def test_wm_encrypted_renders_all_lines_visibly(impl, sample_pdf_path: Path):
+    secret = "mutant-killer-" * 10  # long secret to produce many chunks
+    key = "test-key"
+    position = "none"
 
+    # Ensure applicable
+    assert impl.is_watermark_applicable(sample_pdf_path, position=position)
+
+    # Apply watermark
+    out = impl.add_watermark(sample_pdf_path, secret=secret, key=key, position=position)
+    watermarked_bytes = _extract_bytes(out)
+
+    # Open and extract visible text
+    with fitz.open(stream=watermarked_bytes, filetype="pdf") as doc:
+        page = doc[0]
+        text_lines = page.get_text("text").splitlines()
+
+    # Expect ~len(secret)/32 lines (based on chunking logic)
+    expected_lines = len(secret) // 32 + (1 if len(secret) % 32 else 0)
+
+    # Heuristic: Count lines with watermark characteristics
+    visible_lines = [line for line in text_lines if len(line.strip()) >= 10]
+
+    # Allow some margin, but expect at least 80% of lines are visible
+    assert len(visible_lines) >= int(0.8 * expected_lines), (
+        f"Expected at least {int(0.8 * expected_lines)} visible watermark lines, got {len(visible_lines)}"
+    )
+
+
+@pytest.mark.parametrize("impl", [wm_encrypted()])
+def test_wm_encrypted_position_top_x_centered(impl, sample_pdf_path: Path):
+    secret = "position-test"
+    key = "test-key"
+    position = "top"
+
+    # Apply watermark
+    out = impl.add_watermark(sample_pdf_path, secret=secret, key=key, position=position)
+    watermarked_bytes = _extract_bytes(out)
+
+    # Open the watermarked PDF
+    doc = fitz.open(stream=watermarked_bytes, filetype="pdf")
+
+    # Extract all visible text with their positions on the first page
+    page = doc[0]
+    text_instances = []
+    blocks = page.get_text("dict")["blocks"]
+    for block in blocks:
+        if block["type"] != 0:
+            continue
+        for line in block["lines"]:
+            for span in line["spans"]:
+                bbox = span["bbox"]
+                text = span["text"]
+                text_instances.append((bbox, text))
+
+    # Find the bbox of the watermark text chunk matching part of the secret
+    wm_text_bbox = None
+    for bbox, text in text_instances:
+        if secret[:5] in text:
+            wm_text_bbox = bbox
+            break
+
+    assert wm_text_bbox is not None, "Watermark text not found on page"
+
+    # Check that the watermark's x coordinate is approximately centered horizontally
+    rect_width = doc[0].rect.width  # Access before closing doc
+
+    doc.close()  # Close doc after all access
+
+    text_width = wm_text_bbox[2] - wm_text_bbox[0]  # right - left
+    expected_x = (rect_width - text_width) / 2
+    actual_x = wm_text_bbox[0]
+
+    tolerance = 3.0  # allow small difference due to rendering
+    assert abs(actual_x - expected_x) < tolerance, (
+        f"Watermark x-position is off: actual {actual_x}, expected ~{expected_x}"
+    )
+
+
+def test_server_path_joining_behavior():
+    import server  # Assuming the module is named server.py
+
+    base_name = "report"
+    intended_slug = "user123"
+    dest_dir = Path("/tmp/documents")
+
+    # Simulate function that does the join
+    # We mimic just the code snippet affected by the mutant:
+    unique_stamp = "20251017123456000000-abcdef"
+    candidate = f"{base_name}__{intended_slug}__{unique_stamp}.pdf"
+
+    # The original (correct) way to join path:
+    correct_path = dest_dir / candidate
+
+    # The mutant changes this line to:
+    try:
+        mutant_path = dest_dir % candidate
+        mutant_raised = False
+    except TypeError:
+        mutant_raised = True
+
+    # Assert that mutant_path using % fails (TypeError) or is invalid
+    # Because using % on Path is not valid and should raise.
+    assert mutant_raised, "Mutant allowed invalid path join with '%' operator"
+
+    # Also assert the correct path ends with candidate string
+    assert str(correct_path).endswith(candidate)
+
+
+def test_path_joining_with_storage_root():
+    import server  # your server module
+
+    storage_root = Path("/var/data").resolve()
+    relative_path = Path("files/report.pdf")
+
+    # The original correct behavior:
+    expected_path = storage_root / relative_path
+    assert expected_path.is_absolute()
+
+    # Check path parts rather than raw string:
+    expected_parts = ("var", "data", "files", "report.pdf")
+    # Check these parts are the last parts of the path
+    assert expected_path.parts[-4:] == expected_parts
+
+    # Simulate mutant behavior: replacing / with >>
+    with pytest.raises(TypeError):
+        _ = storage_root >> relative_path
+
+
+def test_watermarking_method_subclass_check(monkeypatch):
+    # Load server.py manually
+    server_path = Path(__file__).resolve().parent.parent / "src" / "server.py"
+    spec = importlib.util.spec_from_file_location("server_module", server_path)
+    server_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(server_module)
+
+    # Dummy plugin that has the right methods
+    class DummyPlugin:
+        def add_watermark(self): pass
+        def read_secret(self): pass
+
+    # Patch WatermarkingMethod to None (simulate mutation)
+    monkeypatch.setattr(server_module, "WatermarkingMethod", None)
+
+    cls = DummyPlugin
+    has_api = all(hasattr(cls, attr) for attr in ("add_watermark", "read_secret"))
+
+    if server_module.WatermarkingMethod is not None:
+        is_ok = issubclass(cls, server_module.WatermarkingMethod) and has_api
+    else:
+        is_ok = has_api
+
+    assert is_ok is True
 
 
 

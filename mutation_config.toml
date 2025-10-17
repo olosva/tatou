@@ -1,0 +1,8 @@
+[cosmic-ray]
+module-path = ["server/src/metadata_embedding.py", "server/src/server.py", "server/src/wm_encrypted.py", "server/src/wm_visible_stamp_gs.py"]
+timeout = 100.0
+excluded-modules = []
+test-command = "pytest -q"
+
+[cosmic-ray.distributor]
+name = "local"
