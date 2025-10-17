@@ -6,3 +6,4 @@ test-command = "pytest -q"
 
 [cosmic-ray.distributor]
 name = "local"
+
