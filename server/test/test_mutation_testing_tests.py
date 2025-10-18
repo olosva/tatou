@@ -16,6 +16,8 @@ from flask.testing import FlaskClient
 from server import create_app
 from flask import Response
 import datetime
+import os
+import tempfile
 
 from metadata_embedding import MetadataEmbedding, InvalidKeyError, SecretNotFoundError
 from wm_visible_stamp_gs import VisibleStampGS
@@ -69,6 +71,22 @@ def client():
     app = create_app()
     app.config["TESTING"] = True
     return app.test_client()
+
+
+def _get_token(client, email="upload@example.com", login="upload_user", pw="abc12345"):
+    client.post("/api/create-user", json={"email": email, "login": login, "password": pw})
+    r = client.post("/api/login", json={"email": email, "password": pw})
+    assert r.status_code == 200
+    token = r.get_json()["token"]
+    return {"Authorization": f"Bearer {token}"}
+
+def _post(client, path, headers=None, data=None, content_type=None):
+    return client.post(path, headers=headers or {}, data=data, content_type=content_type)
+
+@pytest.fixture
+def temp_storage(tmp_path, app):
+    app.config["STORAGE_DIR"] = tmp_path
+    return tmp_path
 
 
 ##### wm_encrypted tests #####
@@ -950,10 +968,197 @@ def test_login_invalid_credentials(monkeypatch, client):
     assert "invalid credentials" in response.json["error"]
 
 
+def test_upload_requires_auth(client):
+    r = client.post("/api/upload-document")
+    assert r.status_code == 401
 
 
+def test_upload_missing_file_field(client, temp_storage):
+    headers = _get_token(client)
+    r = client.post("/api/upload-document", headers=headers, data={}, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "file is required (multipart/form-data)"
 
 
+def test_upload_empty_filename(client, temp_storage):
+    headers = _get_token(client)
+    data = {
+        "file": (io.BytesIO(b"dummy"), "")
+    }
+    r = client.post("/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert r.get_json()["error"] == "empty filename"
+
+
+def test_upload_invalid_pdf(client, temp_storage):
+    headers = _get_token(client)
+    data = {
+        "file": (io.BytesIO(b"This is not a PDF"), "bad.pdf")
+    }
+    r = client.post("/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert r.status_code == 400
+    assert "invalid PDF file" in r.get_json()["error"]
+
+
+def test_upload_broken_pdf_valid_header(client, temp_storage):
+    headers = _get_token(client)
+    # Starts with %PDF- but isn't a valid PDF — should fall back and still accept
+    broken_pdf = b"%PDF-1.7\nthis is just a trick"
+    data = {
+        "file": (io.BytesIO(broken_pdf), "tricky.pdf")
+    }
+    r = client.post("/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert r.status_code == 201
+    json = r.get_json()
+    assert "id" in json
+    assert json["name"] == "tricky.pdf"
+    assert json["sha256"]
+    assert json["size"] > 0
+
+
+def test_upload_valid_pdf(client, temp_storage):
+    headers = _get_token(client)
+    valid_pdf = b"%PDF-1.4\n%...\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
+    data = {
+        "file": (io.BytesIO(valid_pdf), "sample.pdf"),
+        "name": "uploaded_sample.pdf"
+    }
+    r = client.post("/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert r.status_code == 201
+    json = r.get_json()
+    assert json["name"] == "uploaded_sample.pdf"
+    assert json["sha256"]
+    assert json["size"] == len(valid_pdf)
+
+
+def test_list_documents_requires_auth(client):
+    r = client.get("/api/list-documents")
+    assert r.status_code == 401
+
+
+def test_list_versions_unknown_document(client):
+    headers = _get_token(client)
+    # well-formed UUID, but not existing
+    r = client.get("/api/list-versions/123e4567-e89b-12d3-a456-426614174000", headers=headers)
+    assert r.status_code == 200
+    data = r.get_json()
+    assert "versions" in data
+    assert isinstance(data["versions"], list)
+    assert len(data["versions"]) == 0
+
+
+def test_list_all_versions_requires_auth(client):
+    r = client.get("/api/list-all-versions")
+    assert r.status_code == 401
+
+
+def test_list_all_versions_empty_for_new_user(client):
+    headers = _get_token(client)
+    r = client.get("/api/list-all-versions", headers=headers)
+    assert r.status_code == 200
+    data = r.get_json()
+    assert "versions" in data
+    assert isinstance(data["versions"], list)
+    assert len(data["versions"]) == 0
+
+
+def test_get_document_success(client, temp_storage):
+    headers = _get_token(client)
+    pdf_bytes = b"%PDF-1.4\n%...\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
+    data = {
+        "file": (io.BytesIO(pdf_bytes), "test.pdf"),
+    }
+    upload = client.post("/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert upload.status_code == 201
+    doc_id = upload.get_json()["id"]
+
+    r = client.get(f"/api/get-document/{doc_id}", headers=headers)
+    assert r.status_code == 200
+    assert r.mimetype == "application/pdf"
+    assert r.data.startswith(b"%PDF")
+
+
+def test_delete_document_success(client):
+    # Create user & login
+    email = "delete@test.com"
+    login = "delete_user"
+    pw = "abc12345"
+    client.post("/api/create-user", json={"email": email, "login": login, "password": pw})
+    r = client.post("/api/login", json={"email": email, "password": pw})
+    token = r.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Upload document
+    fake_pdf = b"%PDF-1.4\n%...\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n"
+    data = {
+        "name": "test_delete.pdf",
+        "file": (io.BytesIO(fake_pdf), "test_delete.pdf")
+    }
+    r = client.post("/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert r.status_code == 201
+    doc_id = r.get_json()["id"]
+
+    # Delete document
+    r = client.delete(f"/api/delete-document/{doc_id}", headers=headers)
+    assert r.status_code == 200
+    res = r.get_json()
+    assert res["deleted"] is True
+    assert res["file_deleted"] in [True, False]  # May be false if test storage not used
+    assert res["id"] == doc_id
+
+
+def test_delete_document_not_found(client):
+    # Create user & login
+    email = "missing@test.com"
+    login = "missing_user"
+    pw = "abc12345"
+    client.post("/api/create-user", json={"email": email, "login": login, "password": pw})
+    r = client.post("/api/login", json={"email": email, "password": pw})
+    token = r.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Try to delete a random UUID
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    r = client.delete(f"/api/delete-document/{fake_id}", headers=headers)
+    assert r.status_code == 404
+    res = r.get_json()
+    assert "error" in res
+    assert res["error"] == "document not found"
+
+
+def test_create_watermark_unauthorized(client):
+    response = client.post("/api/create-watermark/1234", json={"method": "Dummy", "secret": "ABC"})
+    assert response.status_code == 401  # Assuming @require_auth blocks unauthenticated access
+
+
+def test_load_plugin_file_not_found(client, tmp_path):
+    client.application.config["STORAGE_DIR"] = tmp_path
+
+    # Setup user
+    client.post("/api/create-user", json={"email": "load2@test.com", "login": "load2", "password": "abc123"})
+    res = client.post("/api/login", json={"email": "load2@test.com", "password": "abc123"})
+    token = res.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    r = client.post("/api/load-plugin", headers=headers, json={"filename": "not_exist.pkl"})
+    assert r.status_code == 404
+    assert "plugin file not found" in r.get_json()["error"]
+
+
+def test_read_watermark_missing_fields(client):
+    # Simulate login
+    client.post("/api/create-user", json={"email": "user@wm.com", "login": "wmuser", "password": "test123"})
+    login_res = client.post("/api/login", json={"email": "user@wm.com", "password": "test123"})
+    token = login_res.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Attempt with missing 'key'
+    response = client.post("/api/read-watermark/123", json={
+        "method": "DummyMethod"
+    }, headers=headers)
+
+    assert response.status_code == 400
+    assert "method, and key are required" in response.get_json()["error"]
 
 
 
