@@ -41,7 +41,7 @@ class wm_encrypted(WatermarkingMethod):
         """
         Return a new PDF with a visible watermark and a hidden encrypted secret.
         """
-        #print(">> add_watermark called")
+        position = position or "center"  # default fallback
         
         # Derive a 256-bit key from the provided key, we store the salt and iv in the database
         
@@ -71,6 +71,7 @@ class wm_encrypted(WatermarkingMethod):
         import base64
         import fitz  # PyMuPDF
 
+        position = position or "center"  # default fallback
         # --- normalisera crypto-parametrar: stöd både bytes och ev. base64-strängar ---
         def _norm(x):
             # bytes -> använd som är (om ASCII-base64: decoda)
@@ -171,7 +172,7 @@ class wm_encrypted(WatermarkingMethod):
             if position == "center":
                 x = (rect.width - text_width) / 2
                 y = rect.height / 2
-                rotate = 45
+                rotate = 0
             elif position == "top":
                 x = (rect.width - text_width) / 2
                 y = rect.height * 0.1
