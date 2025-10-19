@@ -17,20 +17,20 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import IntegrityError
 import sys, types
 
-# imghdr togs bort i Python 3.13 – skapa en minimal stub om det saknas
+# imghdr was removed in Python 3.13 – create a minimal stub if missing
 try:
-    import imghdr  # finns på <=3.12
+    import imghdr  # is on <=3.12
 except Exception:
     if sys.version_info >= (3, 13) and "imghdr" not in sys.modules:
         _im = types.ModuleType("imghdr")
 
-        def what(file, h=None):  # minimalistisk stub
+        def what(file, h=None):  # minimali stub
             return None
 
         _im.what = what
         sys.modules["imghdr"] = _im
 
-# RMAP – håll appen körbar även om paketet saknas
+# RMAP – keep the app executable even if the package is missing
 try:
     from rmap.identity_manager import IdentityManager
     from rmap.rmap import RMAP
@@ -53,7 +53,7 @@ from watermarking_utils import METHODS, apply_watermark, read_watermark, explore
 active_sessions = {}
 
 
-# --- Helpers för säkert lagringsformat av crypto-parametrar ---
+# --- Helpers for secure storage format of crypto parameters ---
 def _to_b64_if_bytes(x):
     """Returnera Base64-sträng om x är bytes/bytearray/memoryview, annars x."""
     if isinstance(x, (bytes, bytearray, memoryview)):
@@ -70,7 +70,7 @@ def _from_db_blob_or_b64(x):
     if isinstance(x, (bytes, bytearray)):
         return bytes(x)
     if isinstance(x, str):
-        # Försök base64-dekoda, annars antag UTF-8
+        # Try base64 decoding, otherwise assume UTF-8
         try:
             return base64.b64decode(x)
         except Exception:
@@ -96,12 +96,12 @@ def create_app():
     app.config["DB_NAME"] = os.environ.get("DB_NAME", "tatou")
     app.config["STORAGE_DIR"].mkdir(parents=True, exist_ok=True)
 
-    # Fixa path till keys
+    # Fix path to keys
     BASE_DIR = Path(__file__).parent.resolve()
     client_keys_dir = BASE_DIR / "pki"
     server_public_key_path = BASE_DIR / "pki" / "Group_20.asc"
     server_private_key_path = BASE_DIR / "server_private_key" / "private_key.asc"
-    # TODO: flytta passfras till ENV i prod
+    # TODO: move passfras to ENV in prod
     server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
 
     identity_manager = None
@@ -117,7 +117,7 @@ def create_app():
 
     # --- DB engine only (no Table metadata) ---
     def db_url() -> str:
-        # Test/override: om någon av dessa env-variabler finns, använd den
+        # Test/override
         override = (
             os.environ.get("DB_URL")
             or os.environ.get("DATABASE_URL")
@@ -126,7 +126,7 @@ def create_app():
         if override:
             return override
 
-        # Standard: MySQL i Docker
+        # Default: MySQL in Docker
         return (
             f"mysql+pymysql://{app.config['DB_USER']}:{app.config['DB_PASSWORD']}"
             f"@{app.config['DB_HOST']}:{app.config['DB_PORT']}/{app.config['DB_NAME']}?charset=utf8mb4"
@@ -217,7 +217,7 @@ def create_app():
 
         if not email or not login or not password:
             return jsonify({"error": "email, login, and password are required"}), 400
-        # För test: min 3 tecken (ändra i prod)
+        # For test: min 3 characters (change in prod)
         if len(password) < 3:
             return jsonify({"error": "password must be at least 8 characters"}), 400
         if "@" not in email:
@@ -269,7 +269,7 @@ def create_app():
             app.logger.warning(f"Failed login attempt for: {email}")
             return jsonify({"error": "invalid credentials"}), 401
 
-        # sessionsbaserad token
+        # sessionsbased token
         session_id = secrets.token_urlsafe(32)
         active_sessions[session_id] = {"uid": row.id, "login": row.login, "email": row.email}
         
@@ -289,14 +289,14 @@ def create_app():
         if not file or file.filename == "":
             return jsonify({"error": "empty filename"}), 400
 
-        # --- PDF-validering ---
-        # Först: försök läsa som riktig PDF. Om pypdf klagar, fall back till
-        # en minimal kontroll av att filen börjar med "%PDF-".
+# --- PDF validation ---
+# First: try reading as a real PDF. If pypdf complains, fall back to
+# a minimal check that the file starts with "%PDF-".
         try:
             PdfReader(file)
-            file.seek(0)  # återställ pekaren efter läsning
+            file.seek(0)  # reset the pointer after reading
         except PdfReadError:
-            file.seek(0)  # *viktigt*: gå till början innan vi kollar headern
+            file.seek(0)  # *important*: go to the beginning before we check the header
             head = file.read(5)
             file.seek(0)
             if not isinstance(head, (bytes, bytearray)) or not head.startswith(b"%PDF-"):
@@ -311,7 +311,7 @@ def create_app():
             app.logger.warning("PDF validation fallback (generic): header ok – accepting upload")
 
         fname = file.filename
-        # använd dokument-ID i stället för filnamn i sökvägen
+        # use document ID instead of filename in the path
         did = str(uuid.uuid4())
 
         user_dir = app.config["STORAGE_DIR"] / "files" / g.user["login"]
@@ -453,7 +453,7 @@ def create_app():
         } for r in rows]
         return jsonify({"versions": versions}), 200
 
-    # GET /api/get-document eller /api/get-document/<id>  → returnerar PDF inline
+    # GET /api/get-document or /api/get-document/<id>  → return PDF inline
     @app.get("/api/get-document")
     @app.get("/api/get-document/<string:document_id>")
     @require_auth
@@ -506,7 +506,7 @@ def create_app():
         resp.headers["Cache-Control"] = "private, max-age=0, must-revalidate"
         return resp
 
-    # GET /api/get-version/<link>  → returnerar vattenmärkt PDF inline
+    # GET /api/get-version/<link>  → return wm PDF inline
     @app.get("/api/get-version/<link>")
     def get_version(link: str):
         try:
@@ -551,7 +551,7 @@ def create_app():
         resp.headers["Cache-Control"] = "private, max-age=0"
         return resp
 
-    # Helper: säkert resolvera en path under STORAGE_DIR
+    # Helper: safely resolve a path under STORAGE_DIR
     def _safe_resolve_under_storage(p: str, storage_root: Path) -> Path:
         storage_root = storage_root.resolve()
         fp = Path(p)
@@ -629,6 +629,8 @@ def create_app():
             "note": delete_error,
         }), 200
 
+    #seperate function to allow easier calling from both RMAP and the internal endpoint
+    #this way means we can still have the require_auth decorator on the internal endpoint, but still call it as a normal function from RMAP
     def create_internal_watermark(
         uid: str,
         document_id: str | None = None,
@@ -647,8 +649,11 @@ def create_app():
             doc_id = document_id
         except (TypeError, ValueError):
             return jsonify({"error": "document id required"}), 400
+        
+        #if the method gets called from RMAP it might not have a method in the payload so we select the best one as default
 
         method = payload.get("method")
+        #having a really hard time figuring out how to get the parameters required for the watermarking from RMAP without i looking like shit
         intended_for = payload.get("intended_for")
         position = payload.get("position")
         secret = payload.get("secret")
@@ -928,7 +933,7 @@ def create_app():
         if not method or not isinstance(key, str):
             return jsonify({"error": "method, and key are required"}), 400
 
-        # Hämta rätt version för just den metoden
+        # Get the correct version for that particular method
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -962,7 +967,7 @@ def create_app():
         if not file_path.exists():
             return jsonify({"error": "file missing on disk"}), 410
 
-        # Normalisera DB-värden till råbytes
+        # Normalize DB values ​​to raw bytes
         iv_b   = _from_db_blob_or_b64(row.iv)
         tag_b  = _from_db_blob_or_b64(row.tag)
         salt_b = _from_db_blob_or_b64(row.salt)
@@ -987,12 +992,15 @@ def create_app():
             "position": position
         }), 201
 
-    # --- RMAP endpoints (frivilliga) ---
+    # --- RMAP endpoints ---
     @app.post("/api/rmap-initiate")
+    #@require_auth
     def initiate_rmap():
+        #print(payload)
         if request.is_json:
             payload = request.get_json()
         else:
+        # Get raw text/binary data
             payload = request.get_data(as_text=True)
 
         if not rmap:
@@ -1002,21 +1010,25 @@ def create_app():
         return jsonify(result.get("payload")), 200
 
     @app.post("/api/rmap-get-link")
+    #@require_auth
     def rmap_get_link():
+        # Get raw POST data
+        #print(payload)
         if request.is_json:
             payload = request.get_json()
         else:
+            # Get raw text/binary data
             payload = request.get_data(as_text=True)
 
         if not rmap:
             return jsonify({"error": "RMAP not available on this server"}), 501
 
-        # Id till admin-dokument som andra kan vattenmärka
+        # Id to admin document that others can watermark
         admin_uid = '281b4cb1-abdb-4a61-ad33-9a78cbab12b7'
         pdf_id = '619f9c58-6e40-40d2-ae59-07929e8de44b'
         result = rmap.handle_message2(payload)
 
-        # Skapar en vattenmärkt version och återanvänder RMAP-länken
+        # Creates a watermarked version and reuses the RMAP link
         create_internal_watermark(
             uid=admin_uid,
             document_id=pdf_id,
@@ -1029,6 +1041,10 @@ def create_app():
         )
 
         link_url = url_for("get_version", link=result.get("result"), _external=True)
+        #use get-version endpoint with the newly created wm pdf in order
+        #for the user to get their pdf 
+        #link = {'http://127.0.0.1:5000/api/get-version/'+result.get("result")}
+        #return jsonify({"link" : link}), 200
         return jsonify({"link": link_url}), 200
 
     return app
