@@ -8,7 +8,7 @@ The following instructions are meant for a bash terminal on a Linux machine. If 
 To clone the repo, you can simply run:
 
 ```bash
-git clone https://github.com/nharrand/tatou.git
+git clone https://github.com/olosva/tatou.git
 ```
 
 Note that you should probably fork the repo and clone your own repo.
@@ -23,14 +23,16 @@ cd tatou/server
 python3 -m venv .venv
 
 # Activate your virtual environement
-. .venv/bin/activate
+source .venv/bin/activate
 
 # Install the necessary dependencies
 python -m pip install -e ".[dev]"
 
-# Run the unit tests
-python -m pytest
+# Run all tests
+pytest -q
 ```
+# Run Coverage analysis
+pytest -q --cov --cov-report=term
 
 ### Deploy
 
@@ -38,7 +40,7 @@ From the root of the directory:
 
 ```bash
 # Create a file to set environement variables like passwords.
-cp sample.env .env
+cp .env.example .env
 
 # Edit .env and pick the passwords you want
 
@@ -49,7 +51,7 @@ docker compose up --build -d
 docker compose logs -f
 
 # Test if the API is up
-http -v :5000/healthz
+curl -i http://127.0.0.1:5000/healthz
 
 # Open your browser at 127.0.0.1:5000 to check if the website is up.
 ```
