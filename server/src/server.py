@@ -833,64 +833,64 @@ def create_app():
             **payload
         )
 
-    @app.post("/api/load-plugin")
-    @require_auth
-    def load_plugin():
-        """
-        Ladda en serialiserad klass som implementerar WatermarkingMethod från
-        STORAGE_DIR/files/plugins/<filename>.{pkl|dill} och registrera den i wm_mod.METHODS.
-        Body: { "filename": "MyMethod.pkl", "overwrite": false }
-        """
-        payload = request.get_json(silent=True) or {}
-        filename = (payload.get("filename") or "").strip()
-        overwrite = bool(payload.get("overwrite", False))
-
-        if not filename:
-            return jsonify({"error": "filename is required"}), 400
-
-        storage_root = Path(app.config["STORAGE_DIR"])
-        plugins_dir = storage_root / "files" / "plugins"
-        try:
-            plugins_dir.mkdir(parents=True, exist_ok=True)
-            plugin_path = plugins_dir / filename
-        except Exception as e:
-            return jsonify({"error": f"plugin path error: {e}"}), 500
-
-        if not plugin_path.exists():
-            return jsonify({"error": f"plugin file not found: {filename}"}), 404
-
-        try:
-            with plugin_path.open("rb") as f:
-                obj = _pickle.load(f)
-        except Exception as e:
-            return jsonify({"error": f"failed to deserialize plugin: {e}"}), 400
-
-        if isinstance(obj, type):
-            cls = obj
-        else:
-            cls = obj.__class__
-
-        method_name = getattr(cls, "name", getattr(cls, "__name__", None))
-        if not method_name or not isinstance(method_name, str):
-            return jsonify({"error": "plugin class must define a readable name (class.__name__ or .name)"}), 400
-
-        has_api = all(hasattr(cls, attr) for attr in ("add_watermark", "read_secret"))
-        if WatermarkingMethod is not None:
-            is_ok = issubclass(cls, WatermarkingMethod) and has_api
-        else:
-            is_ok = has_api
-        if not is_ok:
-            return jsonify({"error": "plugin does not implement WatermarkingMethod API (add_watermark/read_secret)"}), 400
-
-        WMUtils.METHODS[method_name] = cls()
-
-        return jsonify({
-            "loaded": True,
-            "filename": filename,
-            "registered_as": method_name,
-            "class_qualname": f"{getattr(cls, '__module__', '?')}.{getattr(cls, '__qualname__', cls.__name__)}",
-            "methods_count": len(WMUtils.METHODS)
-        }), 201
+    #@app.post("/api/load-plugin")
+    #@require_auth
+    #def load_plugin():
+    #    """
+    #    Ladda en serialiserad klass som implementerar WatermarkingMethod från
+    #    STORAGE_DIR/files/plugins/<filename>.{pkl|dill} och registrera den i wm_mod.METHODS.
+    #    Body: { "filename": "MyMethod.pkl", "overwrite": false }
+    #    """
+    #    payload = request.get_json(silent=True) or {}
+    #    filename = (payload.get("filename") or "").strip()
+    #    overwrite = bool(payload.get("overwrite", False))
+#
+    #    if not filename:
+    #        return jsonify({"error": "filename is required"}), 400
+#
+    #    storage_root = Path(app.config["STORAGE_DIR"])
+    #    plugins_dir = storage_root / "files" / "plugins"
+    #    try:
+    #        plugins_dir.mkdir(parents=True, exist_ok=True)
+    #        plugin_path = plugins_dir / filename
+    #    except Exception as e:
+    #        return jsonify({"error": f"plugin path error: {e}"}), 500
+#
+    #    if not plugin_path.exists():
+    #        return jsonify({"error": f"plugin file not found: {filename}"}), 404
+#
+    #    try:
+    #        with plugin_path.open("rb") as f:
+    #            obj = _pickle.load(f)
+    #    except Exception as e:
+    #        return jsonify({"error": f"failed to deserialize plugin: {e}"}), 400
+#
+    #    if isinstance(obj, type):
+    #        cls = obj
+    #    else:
+    #        cls = obj.__class__
+#
+    #    method_name = getattr(cls, "name", getattr(cls, "__name__", None))
+    #    if not method_name or not isinstance(method_name, str):
+    #        return jsonify({"error": "plugin class must define a readable name (class.__name__ or .name)"}), 400
+#
+    #    has_api = all(hasattr(cls, attr) for attr in ("add_watermark", "read_secret"))
+    #    if WatermarkingMethod is not None:
+    #        is_ok = issubclass(cls, WatermarkingMethod) and has_api
+    #    else:
+    #        is_ok = has_api
+    #    if not is_ok:
+    #        return jsonify({"error": "plugin does not implement WatermarkingMethod API (add_watermark/read_secret)"}), 400
+#
+    #    WMUtils.METHODS[method_name] = cls()
+#
+    #    return jsonify({
+    #        "loaded": True,
+    #        "filename": filename,
+    #        "registered_as": method_name,
+    #        "class_qualname": f"{getattr(cls, '__module__', '?')}.{getattr(cls, '__qualname__', cls.__name__)}",
+    #        "methods_count": len(WMUtils.METHODS)
+    #    }), 201
 
     # GET /api/get-watermarking-methods
     @app.get("/api/get-watermarking-methods")
