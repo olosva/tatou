@@ -155,14 +155,16 @@ def create_app():
             token = auth.split(" ", 1)[1].strip()
             try:
                 data = _serializer().loads(token, max_age=app.config["TOKEN_TTL_SECONDS"])
+                #extract sessionID from the token
                 session_id = data["session_id"]
+                 #check that the sessionID is in the active sessions
                 if session_id not in active_sessions:
                     return _auth_error("Invalid session (naughty boy?)")
             except SignatureExpired:
                 return _auth_error("Token expired")
             except BadSignature:
                 return _auth_error("Invalid token")
-
+            #extract user info from the active sessions using the sessionID and set g.user with the info
             user_data = active_sessions[session_id]
             g.user = {"id": user_data["uid"], "login": user_data["login"], "email": user_data.get("email")}
             return f(*args, **kwargs)
@@ -213,6 +215,7 @@ def create_app():
         email = (payload.get("email") or "").strip().lower()
         login = (payload.get("login") or "").strip()
         password = payload.get("password") or ""
+        #creates a random uid instead of autoincrement to avoid enumeration attacks
         uid = str(uuid.uuid4())
 
         if not email or not login or not password:
@@ -269,8 +272,9 @@ def create_app():
             app.logger.warning(f"Failed login attempt for: {email}")
             return jsonify({"error": "invalid credentials"}), 401
 
-        # sessionsbased token
+        #set a session variable instead of a token
         session_id = secrets.token_urlsafe(32)
+        #add the session to the active sessions
         active_sessions[session_id] = {"uid": row.id, "login": row.login, "email": row.email}
         
         
@@ -311,7 +315,7 @@ def create_app():
             app.logger.warning("PDF validation fallback (generic): header ok – accepting upload")
 
         fname = file.filename
-        # use document ID instead of filename in the path
+        #use documentID to avoid directory traversal attacks
         did = str(uuid.uuid4())
 
         user_dir = app.config["STORAGE_DIR"] / "files" / g.user["login"]
@@ -439,6 +443,7 @@ def create_app():
                         JOIN Versions v ON d.id = v.documentid
                         WHERE u.login = :glogin
                     """),
+                    #FIXME so that it uses the user id instead of login
                     {"glogin": str(g.user["login"])},
                 ).all()
         except Exception as e:
@@ -478,7 +483,7 @@ def create_app():
                 ).first()
         except Exception as e:
             return jsonify({"error": f"database error: {str(e)}"}), 503
-
+        # Don’t leak whether a doc exists for another user
         if not row:
             return jsonify({"error": "document not found"}), 404
 
@@ -523,7 +528,7 @@ def create_app():
         except Exception as e:
             app.logger.error(f"DB error: {e}")
             return jsonify({"error": "internal server error"}), 503
-
+        # Don’t leak whether a doc exists for another user
         if not row:
             return jsonify({"error": "document not found"}), 404
 
@@ -583,7 +588,8 @@ def create_app():
             doc_id = document_id
         except (TypeError, ValueError):
             return jsonify({"error": "document id required"}), 400
-
+        # Fetch the document (enforce ownership)
+        #fixed sql injection vulnerability here by using parameterized queries
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -635,7 +641,7 @@ def create_app():
         uid: str,
         document_id: str | None = None,
         link_token: str | None = None,
-        **kwargs
+        **kwargs #neat keyword :)
     ):
         payload = kwargs
         app.logger.debug("create_internal_watermark called")
@@ -651,9 +657,7 @@ def create_app():
             return jsonify({"error": "document id required"}), 400
         
         #if the method gets called from RMAP it might not have a method in the payload so we select the best one as default
-
         method = payload.get("method")
-        #having a really hard time figuring out how to get the parameters required for the watermarking from RMAP without i looking like shit
         intended_for = payload.get("intended_for")
         position = payload.get("position")
         secret = payload.get("secret")
@@ -668,6 +672,7 @@ def create_app():
             return jsonify({"error": "method, intended_for, secret, and key are required"}), 400
 
         # lookup the document; enforce ownership
+        #checks that the document belongs to the user via ownerID
         try:
             with get_engine().connect() as conn:
                 row = conn.execute(
@@ -711,7 +716,7 @@ def create_app():
         except Exception as e:
             return jsonify({"error": f"watermark applicability check failed: {e}"}), 400
 
-        # apply watermark → bytes (+ optional crypto params)
+        # apply watermark with the additional parameters if needed
         try:
             result = WMUtils.apply_watermark(
                 pdf=str(file_path),
@@ -742,7 +747,7 @@ def create_app():
             app.logger.error("watermarking failed: %s", e)
             return jsonify({"error": f"watermarking failed: {e}"}), 500
 
-        # --- MAKE FILENAME UNIQUE (avoid overwriting previous versions) ---
+        # build destination file name: "<original_name>__<intended_to>.pdf"
         base_name = Path(row.name or file_path.name).stem
         intended_slug = secure_filename(intended_for)
         dest_dir = file_path.parent / "watermarks"
@@ -761,9 +766,8 @@ def create_app():
 
         vid = str(uuid.uuid4())
 
-        # --- MAKE LINK UNIQUE (avoid unique constraint violation on Versions.link) ---
-        # If link_token is provided (e.g., RMAP flow), keep it.
-        # Otherwise, make a random, unguessable token.
+        
+        # If link_token is provided (e.g., RMAP flow), keep it..
         def _new_link_token():
             rnd = secrets.token_hex(8)
             return hashlib.sha1(f"{candidate}:{rnd}".encode("utf-8")).hexdigest()
@@ -996,7 +1000,6 @@ def create_app():
     @app.post("/api/rmap-initiate")
     #@require_auth
     def initiate_rmap():
-        #print(payload)
         if request.is_json:
             payload = request.get_json()
         else:
@@ -1010,10 +1013,7 @@ def create_app():
         return jsonify(result.get("payload")), 200
 
     @app.post("/api/rmap-get-link")
-    #@require_auth
     def rmap_get_link():
-        # Get raw POST data
-        #print(payload)
         if request.is_json:
             payload = request.get_json()
         else:
@@ -1041,10 +1041,7 @@ def create_app():
         )
 
         link_url = url_for("get_version", link=result.get("result"), _external=True)
-        #use get-version endpoint with the newly created wm pdf in order
-        #for the user to get their pdf 
-        #link = {'http://127.0.0.1:5000/api/get-version/'+result.get("result")}
-        #return jsonify({"link" : link}), 200
+        #use get-version endpoint with the newly created wm pdf in order for the user to get their pdf 
         return jsonify({"link": link_url}), 200
 
     return app
