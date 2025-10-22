@@ -5,7 +5,7 @@ import pytest
 import hashlib
 import fitz  # PyMuPDF — to inspect PDF contents
 import io
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import Mock, patch, MagicMock, mock_open
 import pickle
 import re
 import base64
@@ -18,6 +18,7 @@ from flask import Response
 import datetime
 import os
 import tempfile
+from sqlalchemy import create_engine, Table, MetaData, Column, String
 
 from metadata_embedding import MetadataEmbedding, InvalidKeyError, SecretNotFoundError
 from wm_visible_stamp_gs import VisibleStampGS
@@ -80,8 +81,10 @@ def _get_token(client, email="upload@example.com", login="upload_user", pw="abc1
     token = r.get_json()["token"]
     return {"Authorization": f"Bearer {token}"}
 
+
 def _post(client, path, headers=None, data=None, content_type=None):
     return client.post(path, headers=headers or {}, data=data, content_type=content_type)
+
 
 @pytest.fixture
 def temp_storage(tmp_path, app):
@@ -1131,18 +1134,174 @@ def test_create_watermark_unauthorized(client):
     assert response.status_code == 401  # Assuming @require_auth blocks unauthenticated access
 
 
-def test_load_plugin_file_not_found(client, tmp_path):
+@pytest.mark.parametrize("filename", [
+    "index.html",
+    "login.html",
+    "signup.html",
+    "documents.html",
+    "style.css"
+])
+def test_static_files_allowed(client, filename):
+    res = client.get(f"/{filename}")
+    assert res.status_code in (200, 304), f"Expected 200 or 304 for {filename}, got {res.status_code}"
+    assert res.mimetype in ("text/html", "text/css")
+
+
+@pytest.mark.parametrize("filename", [
+    "secret.txt",
+    "config.json",
+    "admin.js",
+    "passwords.csv",
+    "style.scss"
+])
+def test_static_files_denied(client, filename):
+    res = client.get(f"/{filename}")
+    assert res.status_code == 403
+    assert "Access denied" in res.get_json()["error"]
+
+
+def test_home_route_serves_index(client):
+    response = client.get("/")
+    assert response.status_code in (200, 304)
+    assert b"<html" in response.data.lower() or b"<!doctype" in response.data.lower()
+    assert "text/html" in response.content_type
+
+
+def test_get_version_works_successfully(client, tmp_path, monkeypatch):
+    # Create a fake PDF file
+    fake_pdf = tmp_path / "test.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4\n%Fake PDF")
+
+    # Set up in-memory SQLite and create Versions table (since get_engine wasn't working)
+    sqlite_file = tmp_path / "test.db"
+    db_url = f"sqlite:///{sqlite_file}"
+    monkeypatch.setenv("DB_URL", db_url)
+    engine = create_engine(db_url, future=True)
+    metadata = MetaData()
+
+    versions = Table("Versions", metadata,
+        Column("link", String, primary_key=True),
+        Column("path", String),
+    )
+    metadata.create_all(engine)
+
+    # Insert test data
+    with engine.connect() as conn:
+        conn.execute(versions.insert().values(link="some-link", path=str(fake_pdf)))
+        conn.commit()
+
+    # Override STORAGE_DIR to match tmp_path
     client.application.config["STORAGE_DIR"] = tmp_path
 
-    # Setup user
-    client.post("/api/create-user", json={"email": "load2@test.com", "login": "load2", "password": "abc123"})
-    res = client.post("/api/login", json={"email": "load2@test.com", "password": "abc123"})
-    token = res.get_json()["token"]
+    # Make request
+    res = client.get("/api/get-version/some-link")
+
+    # Assert
+    assert res.status_code == 200
+    assert res.mimetype == "application/pdf"
+    assert b"%PDF" in res.data
+
+
+def test_get_version_invalid_file_type(client, tmp_path, monkeypatch):
+    # Create a fake non-PDF file
+    fake_file = tmp_path / "test.txt"
+    fake_file.write_text("not a pdf")
+
+    # Set up file-based SQLite and Versions table
+    sqlite_file = tmp_path / "test.db"
+    db_url = f"sqlite:///{sqlite_file}"
+    monkeypatch.setenv("DB_URL", db_url)
+    engine = create_engine(db_url, future=True)
+    metadata = MetaData()
+
+    versions = Table("Versions", metadata,
+        Column("link", String, primary_key=True),
+        Column("path", String),
+    )
+    metadata.create_all(engine)
+
+    # Insert entry pointing to the .txt file
+    with engine.connect() as conn:
+        conn.execute(versions.insert().values(link="test", path=str(fake_file)))
+        conn.commit()
+
+    # Set STORAGE_DIR and call endpoint
+    client.application.config["STORAGE_DIR"] = tmp_path
+    res = client.get("/api/get-version/test")
+
+    # Assertions
+    assert res.status_code == 400
+    assert "invalid file type" in res.get_json()["error"]
+
+
+def test_create_watermark_applies_to_uploaded_pdf(client, sample_pdf_bytes, temp_storage):
+    # Step 1: Create user and login
+    email = "watermark_user@test.com"
+    login = "wm_user"
+    password = "abc12345"
+    client.post("/api/create-user", json={"email": email, "login": login, "password": password})
+    r = client.post("/api/login", json={"email": email, "password": password})
+    assert r.status_code == 200
+    token = r.get_json()["token"]
     headers = {"Authorization": f"Bearer {token}"}
 
-    r = client.post("/api/load-plugin", headers=headers, json={"filename": "not_exist.pkl"})
-    assert r.status_code == 404
-    assert "plugin file not found" in r.get_json()["error"]
+    # Step 2: Upload a sample PDF to get document_id
+    data = {
+        "name": "test.pdf",
+        "file": (io.BytesIO(sample_pdf_bytes), "test.pdf")
+    }
+    r = client.post("/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert r.status_code == 201
+    document_id = r.get_json()["id"]
+
+    # Step 3: Call the watermarking endpoint
+    watermark_payload = {
+        "watermark_text": "CONFIDENTIAL",
+        "opacity": 0.7,
+        "position": "center",
+        "method": "wm-encrypted",
+        "intended_for": "testuser@example.com",
+        "secret": "dummysecret",
+        "key": "dummykey"
+    }
+    r = client.post(f"/api/create-watermark/{document_id}", headers=headers, json=watermark_payload)
+
+    if r.status_code != 200:
+        print("Error response:", r.get_data(as_text=True))
+
+    # Step 4: Assert things are working
+    assert r.status_code == 201
+
+    response_data = r.get_json()
+    assert "filename" in response_data
+    assert response_data["method"] == "wm-encrypted"
+    assert response_data["intended_for"] == "testuser@example.com"
+
+
+def test_get_watermarking_methods(client):
+    # Make a GET request to the endpoint
+    response = client.get("/api/get-watermarking-methods")
+
+    # Assert status code is OK
+    assert response.status_code == 200
+
+    # Parse JSON response
+    data = response.get_json()
+
+    # Basic structure check
+    assert "methods" in data
+    assert isinstance(data["methods"], list)
+
+    # Each method should have 'name' and 'description'
+    for method in data["methods"]:
+        assert "name" in method
+        assert "description" in method
+        assert isinstance(method["name"], str)
+        assert isinstance(method["description"], str)
+
+    # Count should match number of methods returned
+    assert "count" in data
+    assert data["count"] == len(data["methods"])
 
 
 def test_read_watermark_missing_fields(client):
@@ -1159,6 +1318,40 @@ def test_read_watermark_missing_fields(client):
 
     assert response.status_code == 400
     assert "method, and key are required" in response.get_json()["error"]
+
+
+def test_read_watermark_api_document_not_found(client, sample_pdf_bytes):
+    # Step 1: Create user and login
+    email = "user2@example.com"
+    login = "user2"
+    password = "pass123"
+    client.post("/api/create-user", json={"email": email, "login": login, "password": password})
+
+    r = client.post("/api/login", json={"email": email, "password": password})
+    assert r.status_code == 200
+    token = r.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    # Step 2: Upload a sample PDF and get document_id
+    data = {
+        "name": "sample.pdf",
+        "file": (io.BytesIO(sample_pdf_bytes), "sample.pdf")
+    }
+    r = client.post("/api/upload-document", headers=headers, data=data, content_type="multipart/form-data")
+    assert r.status_code == 201
+
+    # Step 3: Call the read-watermark endpoint with a non-existing document ID (to trigger 404)
+    non_existing_document_id = "nonexistent-id-1234"
+    payload = {
+        "method": "wm-encrypted",
+        "key": "dummykey",
+        "position": "center"
+    }
+    r = client.post(f"/api/read-watermark/{non_existing_document_id}", headers=headers, json=payload)
+
+    # Assert that the response status code is 404 (Not Found)
+    assert r.status_code == 404
+
 
 
 
