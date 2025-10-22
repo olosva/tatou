@@ -32,7 +32,10 @@ python -m pip install -e ".[dev]"
 pytest -q
 ```
 # Run Coverage analysis
-pytest -q --cov --cov-report=term
+pytest -q --cov=src --cov-branch --cov-report=term-missing --cov-report=html:htmlcov
+
+# Open Coverage analysis in http://localhost:8000
+python -m http.server --directory (Path way to the file) 8000
 
 ### Deploy
 
