@@ -10,10 +10,6 @@ To clone the repo, you can simply run:
 ```bash
 git clone https://github.com/olosva/tatou.git
 ```
-
-Note that you should probably fork the repo and clone your own repo.
-
-
 ### Run python unit tests
 
 ```bash
@@ -30,7 +26,7 @@ python -m pip install -e ".[dev]"
 
 # Run all tests
 pytest -q
-```
+
 # Run Coverage analysis
 pytest -q --cov=src --cov-branch --cov-report=term-missing --cov-report=html:htmlcov
 
@@ -39,19 +35,15 @@ python -m http.server --directory (Path way to the file) 8000
 
 ### Deploy
 
-From the root of the directory:
+#From the root of the directory:
 
 ```bash
 # Create a file to set environement variables like passwords.
 cp .env.example .env
 
 # Edit .env and pick the passwords you want
-
-# Rebuild the docker image and deploy the containers
-docker compose up --build -d
-
-# Monitor logs in realtime 
-docker compose logs -f
+#run this with your github account and PAT to get the latest version and deploy the containers
+./deploy.sh
 
 # Test if the API is up
 curl -i http://127.0.0.1:5000/healthz
