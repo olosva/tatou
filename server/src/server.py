@@ -101,7 +101,7 @@ def create_app():
     client_keys_dir = BASE_DIR / "pki"
     server_public_key_path = BASE_DIR / "pki" / "Group_20.asc"
     server_private_key_path = BASE_DIR / "server_private_key" / "private_key.asc"
-    # TODO: move passfras to ENV in prod
+    # TODO: move passphrase to ENV in prod
     server_private_key_passphrase = '2e*H*iupUWEL!!%^D2U'
 
     identity_manager = None
@@ -293,9 +293,9 @@ def create_app():
         if not file or file.filename == "":
             return jsonify({"error": "empty filename"}), 400
 
-# --- PDF validation ---
-# First: try reading as a real PDF. If pypdf complains, fall back to
-# a minimal check that the file starts with "%PDF-".
+        
+        # First: try reading as a real PDF. If pypdf complains, fall back to
+        # a minimal check that the file starts with "%PDF-".
         try:
             PdfReader(file)
             file.seek(0)  # reset the pointer after reading
@@ -458,7 +458,7 @@ def create_app():
         } for r in rows]
         return jsonify({"versions": versions}), 200
 
-    # GET /api/get-document or /api/get-document/<id>  → return PDF inline
+    # GET /api/get-document or /api/get-document/<id>
     @app.get("/api/get-document")
     @app.get("/api/get-document/<string:document_id>")
     @require_auth
@@ -671,7 +671,7 @@ def create_app():
         if not method or not intended_for or not isinstance(secret, str) or not isinstance(key, str):
             return jsonify({"error": "method, intended_for, secret, and key are required"}), 400
 
-        # lookup the document; enforce ownership
+        #lookup the document; enforce ownership
         #checks that the document belongs to the user via ownerID
         try:
             with get_engine().connect() as conn:

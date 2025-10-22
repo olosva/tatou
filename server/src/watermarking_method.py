@@ -80,7 +80,7 @@ class InvalidKeyError(WatermarkingError):
 # ----------------------------
 
 def load_pdf_bytes(src: PdfSource) -> bytes:
-    #print("kommer in load pdf bytes")
+    
     """Normalize a :class:`PdfSource` into raw ``bytes``.
 
     Parameters

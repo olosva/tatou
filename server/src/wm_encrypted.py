@@ -13,8 +13,7 @@ from watermarking_method import (
     
 )
 
-#from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-#import secrets
+ 
 
 
 class wm_encrypted(WatermarkingMethod):
@@ -43,13 +42,14 @@ class wm_encrypted(WatermarkingMethod):
         """
         position = position or "center"  # default fallback
         
-        # Derive a 256-bit key from the provided key, we store the salt and iv in the database
         
         
-       # print("Derived key and salt:")
+        
+       
         pdf_bytes = load_pdf_bytes(pdf)
         stamped_pdf = self.add_visible_watermark(pdf_bytes, position, secret)
         
+        # Derive a 256-bit key from the provided key, we store the salt and iv in the database
         key, salt = derive_key(key)
        
         encrypted_secret, nonce, tag = encrypt(secret, key)
@@ -57,7 +57,6 @@ class wm_encrypted(WatermarkingMethod):
         final_pdf = self.add_hidden_watermark(stamped_pdf, encrypted_secret,position)
         #return final_pdf, salt, nonce, tag to add to the database
         #ALLA MÅSTE NOG RETURNERA EN DICT MED PDF BYTES FÖR ATT DET SKA FUNKA
-        print(salt, nonce, tag)
         return {
             "pdf_bytes": final_pdf,
             "salt": base64.b64encode(salt).decode("ascii"),
@@ -72,9 +71,10 @@ class wm_encrypted(WatermarkingMethod):
         import fitz  # PyMuPDF
 
         position = position or "center"  # default fallback
-        # --- normalisera crypto-parametrar: stöd både bytes och ev. base64-strängar ---
+       #iv, tag, and salt can arrive as bytes, base64 strings or plain ASCII
+       #the _norm() function normalizes them to bytes so that decrypt always receive correct values
         def _norm(x):
-            # bytes -> använd som är (om ASCII-base64: decoda)
+            # bytes -> use as is  (if ASCII-base64: decode)
             if isinstance(x, (bytes, bytearray)):
                 try:
                     s = x.decode("ascii")
@@ -83,7 +83,7 @@ class wm_encrypted(WatermarkingMethod):
                     return bytes(x)
                 except UnicodeDecodeError:
                     return bytes(x)
-            # str -> försök base64-dekoda, annars treat-as-bytes
+            
             if isinstance(x, str):
                 try:
                     return base64.b64decode(x)
@@ -97,15 +97,15 @@ class wm_encrypted(WatermarkingMethod):
 
         derived_key, _ = derive_key(key, salt)
 
-        # --- ladda PDF ---
+ 
         pdf_bytes = load_pdf_bytes(pdf)
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
         if doc.page_count == 0:
             raise ValueError("PDF has no pages")
 
-        # --- hämta text-chunks där hemligheten gömts ---
+      
         x, y0 = get_coordinates(position, doc[0].rect)
-        line_height = 7  # måste matcha add_hidden_watermark
+        line_height = 7
 
         chunks = []
         for page in doc:
@@ -126,9 +126,8 @@ class wm_encrypted(WatermarkingMethod):
                     for span in line.get("spans", [])
                 )
                 if not text.strip():
-                    break  # slut på chunk-raden
+                    break  
 
-                # spara enbart base64-tecken
                 clean_chunk = "".join(c for c in text if c.isalnum() or c in "+/=")
                 if clean_chunk:
                     chunks.append(clean_chunk)
@@ -139,7 +138,8 @@ class wm_encrypted(WatermarkingMethod):
         if not chunks:
             raise ValueError("No hidden chunks found at expected positions")
 
-        # --- sätt ihop alla base64-chunks + fixa padding ---
+        # PyMuPDF sometimes returns line breaks or non-base64 characters
+        # We now strip all invalid characters and fix missing padding so decoding never fails with incorrect padding
         b64 = "".join(chunks)
         pad = (-len(b64)) % 4
         if pad:
@@ -195,8 +195,7 @@ class wm_encrypted(WatermarkingMethod):
                 color=(0.7, 0.7, 0.7),  # light gray
                 render_mode=2,  # fill + stroke
                 fontname=font_name,
-                # align=1,  # Optional: Not used with absolute positioning
-                # opacity=0.3
+                
             )
 
         out = io.BytesIO()
@@ -204,21 +203,17 @@ class wm_encrypted(WatermarkingMethod):
         return out.getvalue()
     
     def add_hidden_watermark(self, pdf_bytes, secret, position):
-        #print("kommer in hidden")
+        
         blob_b64 = base64.b64encode(secret).decode("ascii")
         # chunk to avoid huge single strings
         chunk_size = 64
         chunks = [blob_b64[i : i + chunk_size] for i in range(0, len(blob_b64), chunk_size)]
 
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        #page = doc[0] if doc.page_count > 0 else doc.new_page()
-        #rect = page.rect
+
         x, y0 = get_coordinates(position, doc[0].rect)
         
         for page in doc:
-        # small font, invisible rendering mode (render_mode=3)
-        #x = rect.width * 0.02
-        #y0 = rect.height * 0.02
             line_height = 7
             fontsize = 6
             for i, chunk in enumerate(chunks):

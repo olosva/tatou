@@ -8,7 +8,7 @@ read -p "GitHub username: " GITHUB_USER
 read -s -p "GitHub Personal Access Token: " GITHUB_TOKEN
 
 REPO_URL="https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/olosva/tatou"
-)
+
 cd "$(dirname "$0")"
 
 # Fetch latest commits from remote
