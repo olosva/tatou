@@ -996,36 +996,40 @@ def create_app():
             "position": position
         }), 201
 
-    # --- RMAP endpoints ---
+   
     @app.post("/api/rmap-initiate")
     #@require_auth
     def initiate_rmap():
         if request.is_json:
-            payload = request.get_json()
+            payload = request.get_json(force=True)
         else:
         # Get raw text/binary data
-            payload = request.get_data(as_text=True)
-
+            payload = json.loads(request.get_data(as_text=True))
         if not rmap:
             return jsonify({"error": "RMAP not available on this server"}), 501
 
         result = rmap.handle_message1(payload)
-        return jsonify(result.get("payload")), 200
+        #we need to return the entire dict returned by handle_message1 instead of just the payload
+        return jsonify(result), 200
 
     @app.post("/api/rmap-get-link")
     def rmap_get_link():
         if request.is_json:
             payload = request.get_json()
+            print(payload.get("payload"))
+            print("1020")
         else:
             # Get raw text/binary data
             payload = request.get_data(as_text=True)
+            print(payload)
+            print("1026")
 
         if not rmap:
             return jsonify({"error": "RMAP not available on this server"}), 501
-
-        # Id to admin document that others can watermark
-        admin_uid = '281b4cb1-abdb-4a61-ad33-9a78cbab12b7'
-        pdf_id = '619f9c58-6e40-40d2-ae59-07929e8de44b'
+        
+        # Id to admin document that others can watermark (actual ids for doc and user on the VM)
+        admin_uid = 'ae558aec-7162-480f-af24-5f77dda55f92'
+        pdf_id = '3baab07c-03f8-49bb-9f24-2e456e74ceb3'
         result = rmap.handle_message2(payload)
 
         # Creates a watermarked version and reuses the RMAP link
@@ -1039,10 +1043,13 @@ def create_app():
             key="keysecret",
             position="none"
         )
-
-        link_url = url_for("get_version", link=result.get("result"), _external=True)
+        
+        
+        #link_url = url_for("get_version", link=result.get("result"), _external=True)
+        #print("Generated RMAP link URL:", link_url)
         #use get-version endpoint with the newly created wm pdf in order for the user to get their pdf 
-        return jsonify({"link": link_url}), 200
+        #instead of returning the correct url in plain text we need to return just the hex
+        return jsonify(result), 200
 
     return app
 
